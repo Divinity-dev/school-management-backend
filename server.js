@@ -4,6 +4,9 @@ import connectDB from "./config/db.js";
 import authRoutes from "./routes/authRoutes.js";
 import schoolRoutes from "./routes/schoolRoutes.js";
 import schoolAdminRoutes from "./routes/schoolAdminRoutes.js";
+import academicSessionRoutes from "./routes/academicSessionRoutes.js";
+import academicTermRoutes from "./routes/academicTermRoutes.js";
+import schoolClassRoutes from "./routes/schoolClassRoutes.js";
 
 dotenv.config();
 
@@ -16,6 +19,9 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/schools", schoolRoutes);
 app.use("/api/school-admins", schoolAdminRoutes);
+app.use("/api/academic-sessions", academicSessionRoutes);
+app.use("/api/academic-terms", academicTermRoutes);
+app.use("/api/classes", schoolClassRoutes);
 
 connectDB();
 
