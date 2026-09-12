@@ -329,14 +329,15 @@ export const getStudentAttendance = async (req, res) => {
     }
 
     // Students can only view their own attendance
-    if (
-      req.user.role === "student" &&
-      req.user._id.toString() !== student.parent?.toString()
-    ) {
-      return res.status(403).json({
-        message: "You are not authorized to view this attendance",
-      });
-    }
+   if (
+  req.user.role === "student" &&
+  (!student.user ||
+    student.user.toString() !== req.user._id.toString())
+) {
+  return res.status(403).json({
+    message: "You are not authorized to view this attendance",
+  });
+}
 
     // Parents can only view their own child's attendance
     if (
@@ -514,13 +515,16 @@ export const getStudentAttendanceSummary = async (req, res) => {
       });
     }
 
-    // Students cannot currently be mapped safely because Student
-    // does not yet contain a user reference.
-    if (req.user.role === "student") {
-      return res.status(403).json({
-        message: "Student attendance access is not yet configured",
-      });
-    }
+    // Students can only view their own attendance
+   if (
+  req.user.role === "student" &&
+  (!student.user ||
+    student.user.toString() !== req.user._id.toString())
+) {
+  return res.status(403).json({
+    message: "You are not authorized to view this attendance",
+  });
+}
 
     const records = await Attendance.find({
       school: student.school,
@@ -693,5 +697,138 @@ export const getClassAttendanceSummary = async (req, res) => {
   }
 };
 
+export const getMyAttendance = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        message: "Only students can access their own attendance",
+      });
+    }
 
+    const student = await Student.findOne({
+      user: req.user._id,
+      isActive: true,
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        message: "Student record not found",
+      });
+    }
+
+    const filter = {
+      student: student._id,
+      school: student.school,
+    };
+
+    if (req.query.term) {
+      filter.term = req.query.term;
+    }
+
+    const attendance = await Attendance.find(filter)
+      .populate("term", "name startDate endDate")
+      .populate("class", "name arm section")
+      .populate("markedBy", "firstName lastName")
+      .sort({ date: -1 });
+
+    return res.status(200).json({
+      student: {
+        _id: student._id,
+        studentId: student.studentId,
+        firstName: student.firstName,
+        middleName: student.middleName,
+        lastName: student.lastName,
+      },
+      attendance,
+    });
+  } catch (error) {
+    console.error("Get my attendance error:", error);
+
+    return res.status(500).json({
+      message: "Server error while fetching your attendance",
+    });
+  }
+};
+
+export const getMyAttendanceSummary = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        message: "Only students can access their own attendance summary",
+      });
+    }
+
+    const student = await Student.findOne({
+      user: req.user._id,
+      isActive: true,
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        message: "Student record not found",
+      });
+    }
+
+    const filter = {
+      student: student._id,
+      school: student.school,
+    };
+
+    if (req.query.term) {
+      filter.term = req.query.term;
+    }
+
+    const attendance = await Attendance.find(filter).select("status");
+
+    const total = attendance.length;
+
+    const present = attendance.filter(
+      (record) => record.status === "present"
+    ).length;
+
+    const absent = attendance.filter(
+      (record) => record.status === "absent"
+    ).length;
+
+    const late = attendance.filter(
+      (record) => record.status === "late"
+    ).length;
+
+    const excused = attendance.filter(
+      (record) => record.status === "excused"
+    ).length;
+
+    // Late counts as attendance.
+    const attended = present + late;
+
+    const percentage =
+      total > 0 ? Number(((attended / total) * 100).toFixed(2)) : 0;
+
+    return res.status(200).json({
+      student: {
+        _id: student._id,
+        studentId: student.studentId,
+        firstName: student.firstName,
+        middleName: student.middleName,
+        lastName: student.lastName,
+      },
+
+      summary: {
+        total,
+        present,
+        absent,
+        late,
+        excused,
+        attended,
+        percentage,
+      },
+    });
+  } catch (error) {
+    console.error("Get my attendance summary error:", error);
+
+    return res.status(500).json({
+      message: "Server error while fetching your attendance summary",
+    });
+  }
+};
 

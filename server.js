@@ -13,6 +13,9 @@ import subjectRoutes from "./routes/subjectRoutes.js";
 import subjectAssignmentRoutes from "./routes/subjectAssignmentRoutes.js";
 import attendanceRoutes from "./routes/attendanceRoutes.js";
 import assignmentRoutes from "./routes/assignmentRoutes.js";
+import studentPortalRoutes from "./routes/studentPortalRoutes.js";
+import resultRoutes from "./routes/resultRoutes.js";
+import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 
 dotenv.config();
 
@@ -34,6 +37,9 @@ app.use("/api/subjects", subjectRoutes);
 app.use("/api/subject-assignments", subjectAssignmentRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/assignments", assignmentRoutes);
+app.use("/api/student-portal", studentPortalRoutes);
+app.use("/api/results", resultRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
 
 connectDB();
 
@@ -42,5 +48,7 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+
 
 

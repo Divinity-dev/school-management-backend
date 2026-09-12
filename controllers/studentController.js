@@ -1,7 +1,9 @@
 import bcrypt from "bcrypt";
 import Student from "../models/Student.js";
 import AcademicSession from "../models/AcademicSession.js";
+import AcademicTerm from "../models/AcademicTerm.js";
 import SchoolClass from "../models/SchoolClass.js";
+import Subscription from "../models/Subscription.js";
 import User from "../models/User.js";
 
 // @desc    Create student
@@ -41,7 +43,73 @@ export const createStudent = async (req, res) => {
       });
     }
 
+    // --------------------------------------------------
+    // Check current academic term
+    // --------------------------------------------------
+    const currentTerm = await AcademicTerm.findOne({
+      school: req.user.school,
+      isCurrent: true,
+      isActive: true,
+    });
+
+    if (!currentTerm) {
+      return res.status(403).json({
+        message:
+          "No active academic term is currently configured for this school.",
+      });
+    }
+
+    // --------------------------------------------------
+    // Check active subscription for current term
+    // --------------------------------------------------
+    const subscription = await Subscription.findOne({
+      school: req.user.school,
+      academicSession: currentTerm.academicSession,
+      academicTerm: currentTerm._id,
+      status: "active",
+    });
+
+    if (!subscription) {
+      return res.status(403).json({
+        message:
+          "An active subscription is required to register students for the current academic term.",
+      });
+    }
+
+    // --------------------------------------------------
+    // Make sure subscription has not expired
+    // --------------------------------------------------
+    if (
+      subscription.expiresAt &&
+      new Date(subscription.expiresAt) < new Date()
+    ) {
+      return res.status(403).json({
+        message:
+          "Your subscription for the current academic term has expired. Please renew your subscription to register students.",
+      });
+    }
+
+    // --------------------------------------------------
+    // Check student capacity
+    // --------------------------------------------------
+    const activeStudentCount = await Student.countDocuments({
+      school: req.user.school,
+      isActive: true,
+    });
+
+    if (activeStudentCount >= subscription.studentLimit) {
+      return res.status(403).json({
+        message:
+          "Student capacity reached. Please purchase additional student seats to register more students.",
+        studentLimit: subscription.studentLimit,
+        activeStudents: activeStudentCount,
+        availableSeats: 0,
+      });
+    }
+
+    // --------------------------------------------------
     // Make sure the academic session belongs to this school
+    // --------------------------------------------------
     const session = await AcademicSession.findOne({
       _id: academicSession,
       school: req.user.school,
@@ -54,7 +122,9 @@ export const createStudent = async (req, res) => {
       });
     }
 
+    // --------------------------------------------------
     // Make sure the class belongs to this school and session
+    // --------------------------------------------------
     const classRecord = await SchoolClass.findOne({
       _id: schoolClass,
       school: req.user.school,
@@ -69,7 +139,9 @@ export const createStudent = async (req, res) => {
       });
     }
 
+    // --------------------------------------------------
     // Validate parent if provided
+    // --------------------------------------------------
     if (parent) {
       const parentUser = await User.findOne({
         _id: parent,
@@ -85,7 +157,9 @@ export const createStudent = async (req, res) => {
       }
     }
 
+    // --------------------------------------------------
     // Prevent duplicate student ID within the school
+    // --------------------------------------------------
     const existingStudent = await Student.findOne({
       school: req.user.school,
       studentId: studentId.trim(),
@@ -97,6 +171,9 @@ export const createStudent = async (req, res) => {
       });
     }
 
+    // --------------------------------------------------
+    // Create student
+    // --------------------------------------------------
     const student = await Student.create({
       school: req.user.school,
       studentId: studentId.trim(),
@@ -114,14 +191,20 @@ export const createStudent = async (req, res) => {
       phone: phone?.trim() || "",
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "Student created successfully",
       student,
+      subscriptionUsage: {
+        studentLimit: subscription.studentLimit,
+        activeStudents: activeStudentCount + 1,
+        availableSeats:
+          subscription.studentLimit - (activeStudentCount + 1),
+      },
     });
   } catch (error) {
     console.error("Create student error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error",
     });
   }
@@ -222,7 +305,7 @@ export const createStudentPortalAccount = async (req, res) => {
   } catch (error) {
     console.error("Create student portal account error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error while creating student portal account",
     });
   }
@@ -591,3 +674,7 @@ export const deactivateStudent = async (req, res) => {
     });
   }
 };
+
+
+
+

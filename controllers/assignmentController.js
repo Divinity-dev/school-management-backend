@@ -229,6 +229,230 @@ export const getTeacherAssignments = async (req, res) => {
   }
 };
 
+/*
+|--------------------------------------------------------------------------
+| Get Student Assignments
+|--------------------------------------------------------------------------
+*/
+
+export const getStudentAssignments = async (req, res) => {
+  try {
+    // Only students can access their assignment portal.
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        message: "Only students can view student assignments",
+      });
+    }
+
+    // Find the student record linked to the logged-in user.
+    const student = await Student.findOne({
+      user: req.user._id,
+      isActive: true,
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        message: "Student record not found",
+      });
+    }
+
+    /*
+     * Only return published assignments for the student's:
+     * - school
+     * - academic session
+     * - class
+     */
+    const assignments = await Assignment.find({
+      school: student.school,
+      academicSession: student.academicSession,
+      schoolClass: student.schoolClass,
+      status: "published",
+    })
+      .populate("academicSession", "name")
+      .populate("term", "name startDate endDate")
+      .populate("schoolClass", "name arm section")
+      .populate("subject", "name code")
+      .populate("teacher", "firstName lastName")
+      .sort({ dueDate: 1, createdAt: -1 });
+
+    /*
+     * Find this student's submissions for all returned assignments.
+     */
+    const assignmentIds = assignments.map(
+      (assignment) => assignment._id
+    );
+
+    const submissions = await AssignmentSubmission.find({
+      assignment: { $in: assignmentIds },
+      student: student._id,
+      school: student.school,
+    }).select(
+      "assignment submittedAt score feedback status attachments content"
+    );
+
+    const submissionMap = new Map();
+
+    submissions.forEach((submission) => {
+      submissionMap.set(
+        submission.assignment.toString(),
+        submission
+      );
+    });
+
+    /*
+     * Add submission information to every assignment.
+     */
+    const assignmentsWithSubmission = assignments.map((assignment) => {
+      const submission = submissionMap.get(
+        assignment._id.toString()
+      );
+
+      return {
+        ...assignment.toObject(),
+
+        submission: submission
+          ? {
+              _id: submission._id,
+              submittedAt: submission.submittedAt,
+              score: submission.score,
+              feedback: submission.feedback,
+              status: submission.status,
+              attachments: submission.attachments,
+              content: submission.content,
+            }
+          : null,
+
+        submissionStatus: submission
+          ? submission.status
+          : "not_submitted",
+      };
+    });
+
+    return res.status(200).json({
+      count: assignmentsWithSubmission.length,
+      assignments: assignmentsWithSubmission,
+    });
+  } catch (error) {
+    console.error("Get student assignments error:", error);
+
+    return res.status(500).json({
+      message: "Server error while fetching student assignments",
+    });
+  }
+};
+
+/*
+|--------------------------------------------------------------------------
+| Get Student's Own Assignment Submission
+|--------------------------------------------------------------------------
+*/
+
+export const getStudentAssignmentSubmission = async (req, res) => {
+  try {
+    // Only students can access their own submissions.
+    if (req.user.role !== "student") {
+      return res.status(403).json({
+        message: "Only students can view their submissions",
+      });
+    }
+
+    const { assignmentId } = req.params;
+
+    if (!assignmentId) {
+      return res.status(400).json({
+        message: "assignmentId is required",
+      });
+    }
+
+    // Find the student record linked to the logged-in user.
+    const student = await Student.findOne({
+      user: req.user._id,
+      isActive: true,
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        message: "Student record not found",
+      });
+    }
+
+    // Find the assignment.
+    const assignment = await Assignment.findById(assignmentId)
+      .populate("academicSession", "name")
+      .populate("term", "name startDate endDate")
+      .populate("schoolClass", "name arm section")
+      .populate("subject", "name code")
+      .populate("teacher", "firstName lastName");
+
+    if (!assignment) {
+      return res.status(404).json({
+        message: "Assignment not found",
+      });
+    }
+
+    // School isolation.
+    if (
+      assignment.school.toString() !== student.school.toString()
+    ) {
+      return res.status(403).json({
+        message: "You are not authorized to view this assignment",
+      });
+    }
+
+    // Class isolation.
+    if (
+  assignment.schoolClass._id.toString() !==
+  student.schoolClass.toString()
+) {
+      return res.status(403).json({
+        message: "This assignment is not assigned to your class",
+      });
+    }
+
+    // Academic session isolation.
+    if (
+      assignment.academicSession._id.toString() !==
+      student.academicSession.toString()
+    ) {
+      return res.status(403).json({
+        message:
+          "This assignment does not belong to your academic session",
+      });
+    }
+
+    // Find only this student's submission.
+    const submission = await AssignmentSubmission.findOne({
+      assignment: assignment._id,
+      student: student._id,
+      school: student.school,
+    }).populate(
+      "student",
+      "studentId firstName middleName lastName profileImage"
+    );
+
+    if (!submission) {
+      return res.status(404).json({
+        message: "You have not submitted this assignment",
+      });
+    }
+
+    return res.status(200).json({
+      assignment,
+      submission,
+    });
+  } catch (error) {
+    console.error(
+      "Get student assignment submission error:",
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        "Server error while fetching student assignment submission",
+    });
+  }
+};
+
 export const submitAssignment = async (req, res) => {
   try {
     // Only students can submit assignments.
@@ -669,6 +893,127 @@ export const gradeAssignmentSubmission = async (req, res) => {
 
     return res.status(500).json({
       message: "Server error while grading assignment submission",
+    });
+  }
+};
+
+// @desc    Publish an assignment
+// @route   PATCH /api/assignments/:assignmentId/publish
+// @access  Teacher, School Admin, Super Admin
+export const publishAssignment = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+
+    const assignment = await Assignment.findById(assignmentId);
+
+    if (!assignment) {
+      return res.status(404).json({
+        message: "Assignment not found",
+      });
+    }
+
+    // Teacher can only publish their own assignment
+    if (
+      req.user.role === "teacher" &&
+      assignment.teacher.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        message: "You are not authorized to publish this assignment",
+      });
+    }
+
+    // School admin can only publish assignments belonging to their school
+    if (
+      req.user.role === "schoolAdmin" &&
+      assignment.school.toString() !== req.user.school.toString()
+    ) {
+      return res.status(403).json({
+        message: "You are not authorized to publish this assignment",
+      });
+    }
+
+    // Only draft assignments can be published
+    if (assignment.status !== "draft") {
+      return res.status(400).json({
+        message: `Assignment cannot be published because it is already ${assignment.status}`,
+      });
+    }
+
+    assignment.status = "published";
+
+    await assignment.save();
+
+    return res.status(200).json({
+      message: "Assignment published successfully",
+      assignment,
+    });
+  } catch (error) {
+    console.error("Publish assignment error:", error);
+
+    return res.status(500).json({
+      message: "Failed to publish assignment",
+      error: error.message,
+    });
+  }
+};
+
+
+// @desc    Close an assignment
+// @route   PATCH /api/assignments/:assignmentId/close
+// @access  Teacher, School Admin, Super Admin
+export const closeAssignment = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+
+    const assignment = await Assignment.findById(assignmentId);
+
+    if (!assignment) {
+      return res.status(404).json({
+        message: "Assignment not found",
+      });
+    }
+
+    // Teacher can only close their own assignment
+    if (
+      req.user.role === "teacher" &&
+      assignment.teacher.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        message: "You are not authorized to close this assignment",
+      });
+    }
+
+    // School admin can only close assignments belonging to their school
+    if (
+      req.user.role === "schoolAdmin" &&
+      assignment.school.toString() !== req.user.school.toString()
+    ) {
+      return res.status(403).json({
+        message: "You are not authorized to close this assignment",
+      });
+    }
+
+    // Only published assignments can be closed
+    if (assignment.status !== "published") {
+      return res.status(400).json({
+        message: `Assignment cannot be closed because it is currently ${assignment.status}`,
+      });
+    }
+
+    assignment.status = "closed";
+
+    await assignment.save();
+
+    return res.status(200).json({
+      message: "Assignment closed successfully",
+      assignment,
+    });
+  } catch (error) {
+    console.error("Close assignment error:", error);
+
+    return res.status(500).json({
+      message: "Failed to close assignment",
+      error: error.message,
     });
   }
 };
