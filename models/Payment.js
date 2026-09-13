@@ -64,6 +64,12 @@ const paymentSchema = new mongoose.Schema(
       default: "paystack",
     },
 
+    paystackTransactionId: {
+  type: String,
+  default: null,
+  index: true,
+},
+
     status: {
       type: String,
       enum: ["pending", "successful", "failed", "cancelled"],

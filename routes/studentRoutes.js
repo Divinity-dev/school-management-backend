@@ -15,6 +15,9 @@ import {
   protect,
   authorize,
 } from "../middleware/authMiddleware.js";
+import {
+  requireActiveSubscription,
+} from "../middleware/subscriptionMiddleware.js";
 
 const router = express.Router();
 
@@ -34,6 +37,7 @@ router.get("/:id", getStudent);
 router.post(
   "/",
   authorize("schoolAdmin"),
+  requireActiveSubscription,
   createStudent
 );
 

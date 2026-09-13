@@ -14,20 +14,39 @@ import {
 } from "../controllers/assignmentController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
+import { requireActiveSubscription } from "../middleware/subscriptionMiddleware.js";
 
 const router = express.Router();
 
-router.post("/", protect, createAssignment);
+// Create assignment
+router.post(
+  "/",
+  protect,
+  requireActiveSubscription,
+  createAssignment
+);
 
-router.get("/teacher", protect, getTeacherAssignments);
+// Teacher assignment portal
+router.get(
+  "/teacher",
+  protect,
+  requireActiveSubscription,
+  getTeacherAssignments
+);
 
 // Student assignment portal
-router.get("/student", protect, getStudentAssignments);
+router.get(
+  "/student",
+  protect,
+  requireActiveSubscription,
+  getStudentAssignments
+);
 
 // Student's own submission/result
 router.get(
   "/:assignmentId/my-submission",
   protect,
+  requireActiveSubscription,
   getStudentAssignmentSubmission
 );
 
@@ -35,6 +54,7 @@ router.get(
 router.patch(
   "/:assignmentId/publish",
   protect,
+  requireActiveSubscription,
   publishAssignment
 );
 
@@ -42,6 +62,7 @@ router.patch(
 router.patch(
   "/:assignmentId/close",
   protect,
+  requireActiveSubscription,
   closeAssignment
 );
 
@@ -49,6 +70,7 @@ router.patch(
 router.post(
   "/:assignmentId/submit",
   protect,
+  requireActiveSubscription,
   submitAssignment
 );
 
@@ -56,18 +78,21 @@ router.post(
 router.get(
   "/:assignmentId/submissions",
   protect,
+  requireActiveSubscription,
   getAssignmentSubmissions
 );
 
 router.get(
   "/:assignmentId/submissions/:submissionId",
   protect,
+  requireActiveSubscription,
   getAssignmentSubmission
 );
 
 router.patch(
   "/:assignmentId/submissions/:submissionId/grade",
   protect,
+  requireActiveSubscription,
   gradeAssignmentSubmission
 );
 

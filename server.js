@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import express from "express";
 import connectDB from "./config/db.js";
+
 import authRoutes from "./routes/authRoutes.js";
 import schoolRoutes from "./routes/schoolRoutes.js";
 import schoolAdminRoutes from "./routes/schoolAdminRoutes.js";
@@ -16,11 +17,24 @@ import assignmentRoutes from "./routes/assignmentRoutes.js";
 import studentPortalRoutes from "./routes/studentPortalRoutes.js";
 import resultRoutes from "./routes/resultRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
 
 dotenv.config();
 
 const app = express();
 
+/*
+ * Paystack webhook
+ *
+ * This route must receive the raw request body so that
+ * Paystack's x-paystack-signature can be verified correctly.
+ */
+app.use(
+  "/api/payments/webhook",
+  express.raw({ type: "application/json" })
+);
+
+// Normal JSON parsing for all other requests
 app.use(express.json());
 
 // routes
@@ -40,6 +54,7 @@ app.use("/api/assignments", assignmentRoutes);
 app.use("/api/student-portal", studentPortalRoutes);
 app.use("/api/results", resultRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
+app.use("/api/payments", paymentRoutes);
 
 connectDB();
 
@@ -48,7 +63,3 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
-
-
-

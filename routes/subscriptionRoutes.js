@@ -2,11 +2,13 @@ import express from "express";
 
 import {
   createSubscription,
+  initializeSubscriptionPayment,
+  verifySubscriptionPayment,
+  initializeAdditionalSeatsPayment,
+  verifyAdditionalSeatsPayment,
   getTermSubscription,
   getCurrentSubscription,
   checkSubscriptionStatus,
-  activateSubscription,
-  addStudentSeats,
 } from "../controllers/subscriptionController.js";
 
 import {
@@ -16,38 +18,73 @@ import {
 
 const router = express.Router();
 
+// All subscription routes require authentication
 router.use(protect);
 
-// School admin only
+// --------------------------------------------------
+// Create subscription
+// --------------------------------------------------
 router.post(
   "/",
   authorize("schoolAdmin"),
   createSubscription
 );
 
+// --------------------------------------------------
+// Initialize initial subscription payment
+// --------------------------------------------------
 router.post(
-  "/activate",
+  "/pay",
   authorize("schoolAdmin"),
-  activateSubscription
+  initializeSubscriptionPayment
 );
 
-router.post(
-  "/add-seats",
+// --------------------------------------------------
+// Verify initial subscription payment
+// --------------------------------------------------
+router.get(
+  "/payment/verify/:reference",
   authorize("schoolAdmin"),
-  addStudentSeats
+  verifySubscriptionPayment
 );
 
-// Read-only subscription information
+// --------------------------------------------------
+// Initialize additional seats payment
+// --------------------------------------------------
+router.post(
+  "/add-seats/pay",
+  authorize("schoolAdmin"),
+  initializeAdditionalSeatsPayment
+);
+
+// --------------------------------------------------
+// Verify additional seats payment
+// --------------------------------------------------
+router.get(
+  "/add-seats/payment/verify/:reference",
+  authorize("schoolAdmin"),
+  verifyAdditionalSeatsPayment
+);
+
+// --------------------------------------------------
+// Get current subscription
+// --------------------------------------------------
 router.get(
   "/current",
   getCurrentSubscription
 );
 
+// --------------------------------------------------
+// Get subscription for a specific term
+// --------------------------------------------------
 router.get(
   "/term",
   getTermSubscription
 );
 
+// --------------------------------------------------
+// Check subscription status
+// --------------------------------------------------
 router.get(
   "/status",
   checkSubscriptionStatus

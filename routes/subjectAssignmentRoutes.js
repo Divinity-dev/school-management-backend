@@ -14,29 +14,36 @@ import {
   authorize,
 } from "../middleware/authMiddleware.js";
 
+import { requireActiveSubscription } from "../middleware/subscriptionMiddleware.js";
+
 const router = express.Router();
 
 router.use(protect);
 
 router.get("/", getSubjectAssignments);
+
 router.get("/class/:classId", getAssignmentsByClass);
+
 router.get("/:id", getSubjectAssignment);
 
 router.post(
   "/",
   authorize("schoolAdmin"),
+  requireActiveSubscription,
   createSubjectAssignment
 );
 
 router.put(
   "/:id",
   authorize("schoolAdmin"),
+  requireActiveSubscription,
   updateSubjectAssignment
 );
 
 router.patch(
   "/:id/deactivate",
   authorize("schoolAdmin"),
+  requireActiveSubscription,
   deactivateSubjectAssignment
 );
 

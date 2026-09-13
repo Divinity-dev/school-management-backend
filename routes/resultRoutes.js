@@ -1,4 +1,5 @@
 import express from "express";
+
 import {
   createResult,
   updateResult,
@@ -16,26 +17,97 @@ import {
 } from "../controllers/resultController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
+import { requireActiveSubscription } from "../middleware/subscriptionMiddleware.js";
 
 const router = express.Router();
 
-router.post("/", protect, createResult);
+// Create result
+router.post(
+  "/",
+  protect,
+  requireActiveSubscription,
+  createResult
+);
 
+// Read-only routes
 router.get("/my-results", protect, getMyResults);
-router.get("/analytics/class-averages", protect, getClassAverages);
-router.get("/analytics/class-rankings", protect, getClassRanking);
-router.get("/student-report", protect, getStudentReport);
-router.get("/teacher-results", protect, getTeacherResults);
-router.get("/teacher-roster", protect, getTeacherRoster);
-router.post("/teacher-results/submit", protect, submitTeacherResults);
-router.put("/:id", protect, updateResult);
 
-router.post("/:id/submit", protect, submitResultForReview);
+router.get(
+  "/analytics/class-averages",
+  protect,
+  getClassAverages
+);
 
-router.post("/:id/publish", protect, publishResult);
+router.get(
+  "/analytics/class-rankings",
+  protect,
+  getClassRanking
+);
 
-router.post("/:id/reject", protect, rejectResult);
+router.get(
+  "/student-report",
+  protect,
+  getStudentReport
+);
 
-router.post("/:id/lock", protect, lockResult);
+router.get(
+  "/teacher-results",
+  protect,
+  getTeacherResults
+);
+
+router.get(
+  "/teacher-roster",
+  protect,
+  getTeacherRoster
+);
+
+// Submit teacher results
+router.post(
+  "/teacher-results/submit",
+  protect,
+  requireActiveSubscription,
+  submitTeacherResults
+);
+
+// Update result
+router.put(
+  "/:id",
+  protect,
+  requireActiveSubscription,
+  updateResult
+);
+
+// Submit result for review
+router.post(
+  "/:id/submit",
+  protect,
+  requireActiveSubscription,
+  submitResultForReview
+);
+
+// Publish result
+router.post(
+  "/:id/publish",
+  protect,
+  requireActiveSubscription,
+  publishResult
+);
+
+// Reject result
+router.post(
+  "/:id/reject",
+  protect,
+  requireActiveSubscription,
+  rejectResult
+);
+
+// Lock result
+router.post(
+  "/:id/lock",
+  protect,
+  requireActiveSubscription,
+  lockResult
+);
 
 export default router;
