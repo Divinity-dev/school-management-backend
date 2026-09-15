@@ -14,8 +14,6 @@ import {
   authorize,
 } from "../middleware/authMiddleware.js";
 
-import { requireActiveSubscription } from "../middleware/subscriptionMiddleware.js";
-
 const router = express.Router();
 
 router.use(protect);
@@ -25,32 +23,30 @@ router.get("/", getAcademicSessions);
 
 router.get("/:id", getAcademicSession);
 
-// School administration
+// Academic session setup and management
+// These operations are available before subscription.
+
 router.post(
   "/",
   authorize("schoolAdmin"),
-  requireActiveSubscription,
   createAcademicSession
 );
 
 router.patch(
   "/:id/current",
   authorize("schoolAdmin"),
-  requireActiveSubscription,
   setCurrentAcademicSession
 );
 
 router.put(
   "/:id",
   authorize("schoolAdmin"),
-  requireActiveSubscription,
   updateAcademicSession
 );
 
 router.patch(
   "/:id/deactivate",
   authorize("schoolAdmin"),
-  requireActiveSubscription,
   deactivateAcademicSession
 );
 

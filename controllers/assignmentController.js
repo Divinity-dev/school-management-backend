@@ -5,6 +5,41 @@ import AcademicTerm from "../models/AcademicTerm.js";
 import Student from "../models/Student.js";
 import AssignmentSubmission from "../models/AssignmentSubmission.js";
 
+/*
+|--------------------------------------------------------------------------
+| Helpers
+|--------------------------------------------------------------------------
+*/
+
+const isStaffRole = (role) =>
+  ["teacher", "schoolAdmin", "superAdmin"].includes(role);
+
+const isAssignmentManager = (req, assignment) => {
+  if (req.user.role === "superAdmin") {
+    return true;
+  }
+
+  if (req.user.role === "schoolAdmin") {
+    return (
+      assignment.school?.toString() === req.user.school?.toString()
+    );
+  }
+
+  if (req.user.role === "teacher") {
+    return (
+      assignment.teacher?.toString() === req.user._id.toString()
+    );
+  }
+
+  return false;
+};
+
+/*
+|--------------------------------------------------------------------------
+| Create Assignment
+|--------------------------------------------------------------------------
+*/
+
 export const createAssignment = async (req, res) => {
   try {
     const {
@@ -25,12 +60,8 @@ export const createAssignment = async (req, res) => {
       });
     }
 
-    // Only teachers and school admins can create assignments.
-    if (
-      req.user.role !== "teacher" &&
-      req.user.role !== "schoolAdmin" &&
-      req.user.role !== "superAdmin"
-    ) {
+    // Only teachers, school admins and super admins can create assignments.
+    if (!isStaffRole(req.user.role)) {
       return res.status(403).json({
         message: "You are not authorized to create assignments",
       });
@@ -52,7 +83,11 @@ export const createAssignment = async (req, res) => {
       });
     }
 
-    // School isolation.
+    /*
+     * School isolation.
+     *
+     * SuperAdmin can operate across schools.
+     */
     if (
       req.user.role !== "superAdmin" &&
       subjectAssignment.school.toString() !== req.user.school.toString()
@@ -62,7 +97,10 @@ export const createAssignment = async (req, res) => {
       });
     }
 
-    // Teachers can only create assignments for subjects they teach.
+    /*
+     * Teachers can only create assignments for subjects
+     * assigned to them.
+     */
     if (
       req.user.role === "teacher" &&
       subjectAssignment.teacher.toString() !== req.user._id.toString()
@@ -79,11 +117,18 @@ export const createAssignment = async (req, res) => {
 
     if (!schoolClass) {
       return res.status(404).json({
-        message: "Class associated with this subject assignment not found",
+        message:
+          "Class associated with this subject assignment not found",
       });
     }
 
-    // Make sure the class belongs to the same school.
+    if (!schoolClass.isActive) {
+      return res.status(400).json({
+        message: "The class associated with this subject assignment is inactive",
+      });
+    }
+
+    // Class must belong to the same school.
     if (
       schoolClass.school.toString() !==
       subjectAssignment.school.toString()
@@ -93,13 +138,14 @@ export const createAssignment = async (req, res) => {
       });
     }
 
-    // Make sure the subject assignment belongs to the class.
+    // Class must belong to the same academic session.
     if (
-      subjectAssignment.schoolClass.toString() !==
-      schoolClass._id.toString()
+      schoolClass.academicSession.toString() !==
+      subjectAssignment.academicSession.toString()
     ) {
       return res.status(400).json({
-        message: "Invalid class for this subject assignment",
+        message:
+          "Class does not belong to the subject assignment's academic session",
       });
     }
 
@@ -108,6 +154,12 @@ export const createAssignment = async (req, res) => {
     if (!academicTerm) {
       return res.status(404).json({
         message: "Academic term not found",
+      });
+    }
+
+    if (!academicTerm.isActive) {
+      return res.status(400).json({
+        message: "The academic term is inactive",
       });
     }
 
@@ -132,17 +184,6 @@ export const createAssignment = async (req, res) => {
       });
     }
 
-    // Class must belong to the same academic session.
-    if (
-      schoolClass.academicSession.toString() !==
-      subjectAssignment.academicSession.toString()
-    ) {
-      return res.status(400).json({
-        message:
-          "Class does not belong to the subject assignment's academic session",
-      });
-    }
-
     const dueDateValue = new Date(dueDate);
 
     if (Number.isNaN(dueDateValue.getTime())) {
@@ -159,7 +200,7 @@ export const createAssignment = async (req, res) => {
       subject: subjectAssignment.subject,
       subjectAssignment: subjectAssignment._id,
       teacher: subjectAssignment.teacher,
-      title,
+      title: title.trim(),
       description,
       instructions,
       dueDate: dueDateValue,
@@ -189,25 +230,35 @@ export const createAssignment = async (req, res) => {
   }
 };
 
+/*
+|--------------------------------------------------------------------------
+| Get Teacher Assignments
+|--------------------------------------------------------------------------
+*/
+
 export const getTeacherAssignments = async (req, res) => {
   try {
-    // Only teachers and school admins can access teacher assignments.
-    if (
-      req.user.role !== "teacher" &&
-      req.user.role !== "schoolAdmin" &&
-      req.user.role !== "superAdmin"
-    ) {
+    if (!isStaffRole(req.user.role)) {
       return res.status(403).json({
         message: "You are not authorized to view teacher assignments",
       });
     }
 
-    const assignments = await Assignment.find({
-      teacher: req.user._id,
-      ...(req.user.role !== "superAdmin"
-        ? { school: req.user.school }
-        : {}),
-    })
+    let filter = {};
+
+    if (req.user.role === "teacher") {
+      filter = {
+        teacher: req.user._id,
+        school: req.user.school,
+      };
+    } else if (req.user.role === "schoolAdmin") {
+      filter = {
+        school: req.user.school,
+      };
+    }
+
+    // SuperAdmin intentionally has no school filter.
+    const assignments = await Assignment.find(filter)
       .populate("academicSession", "name")
       .populate("term", "name startDate endDate")
       .populate("schoolClass", "name arm section")
@@ -237,14 +288,12 @@ export const getTeacherAssignments = async (req, res) => {
 
 export const getStudentAssignments = async (req, res) => {
   try {
-    // Only students can access their assignment portal.
     if (req.user.role !== "student") {
       return res.status(403).json({
         message: "Only students can view student assignments",
       });
     }
 
-    // Find the student record linked to the logged-in user.
     const student = await Student.findOne({
       user: req.user._id,
       isActive: true,
@@ -256,12 +305,6 @@ export const getStudentAssignments = async (req, res) => {
       });
     }
 
-    /*
-     * Only return published assignments for the student's:
-     * - school
-     * - academic session
-     * - class
-     */
     const assignments = await Assignment.find({
       school: student.school,
       academicSession: student.academicSession,
@@ -275,9 +318,6 @@ export const getStudentAssignments = async (req, res) => {
       .populate("teacher", "firstName lastName")
       .sort({ dueDate: 1, createdAt: -1 });
 
-    /*
-     * Find this student's submissions for all returned assignments.
-     */
     const assignmentIds = assignments.map(
       (assignment) => assignment._id
     );
@@ -299,9 +339,6 @@ export const getStudentAssignments = async (req, res) => {
       );
     });
 
-    /*
-     * Add submission information to every assignment.
-     */
     const assignmentsWithSubmission = assignments.map((assignment) => {
       const submission = submissionMap.get(
         assignment._id.toString()
@@ -349,7 +386,6 @@ export const getStudentAssignments = async (req, res) => {
 
 export const getStudentAssignmentSubmission = async (req, res) => {
   try {
-    // Only students can access their own submissions.
     if (req.user.role !== "student") {
       return res.status(403).json({
         message: "Only students can view their submissions",
@@ -364,7 +400,6 @@ export const getStudentAssignmentSubmission = async (req, res) => {
       });
     }
 
-    // Find the student record linked to the logged-in user.
     const student = await Student.findOne({
       user: req.user._id,
       isActive: true,
@@ -376,7 +411,6 @@ export const getStudentAssignmentSubmission = async (req, res) => {
       });
     }
 
-    // Find the assignment.
     const assignment = await Assignment.findById(assignmentId)
       .populate("academicSession", "name")
       .populate("term", "name startDate endDate")
@@ -390,26 +424,24 @@ export const getStudentAssignmentSubmission = async (req, res) => {
       });
     }
 
-    // School isolation.
     if (
-      assignment.school.toString() !== student.school.toString()
+      assignment.school.toString() !==
+      student.school.toString()
     ) {
       return res.status(403).json({
         message: "You are not authorized to view this assignment",
       });
     }
 
-    // Class isolation.
     if (
-  assignment.schoolClass._id.toString() !==
-  student.schoolClass.toString()
-) {
+      assignment.schoolClass._id.toString() !==
+      student.schoolClass.toString()
+    ) {
       return res.status(403).json({
         message: "This assignment is not assigned to your class",
       });
     }
 
-    // Academic session isolation.
     if (
       assignment.academicSession._id.toString() !==
       student.academicSession.toString()
@@ -420,7 +452,6 @@ export const getStudentAssignmentSubmission = async (req, res) => {
       });
     }
 
-    // Find only this student's submission.
     const submission = await AssignmentSubmission.findOne({
       assignment: assignment._id,
       student: student._id,
@@ -453,16 +484,20 @@ export const getStudentAssignmentSubmission = async (req, res) => {
   }
 };
 
+/*
+|--------------------------------------------------------------------------
+| Submit Assignment
+|--------------------------------------------------------------------------
+*/
+
 export const submitAssignment = async (req, res) => {
   try {
-    // Only students can submit assignments.
     if (req.user.role !== "student") {
       return res.status(403).json({
         message: "Only students can submit assignments",
       });
     }
 
-    // Find the student record belonging to the authenticated user.
     const student = await Student.findOne({
       user: req.user._id,
       isActive: true,
@@ -483,7 +518,6 @@ export const submitAssignment = async (req, res) => {
       });
     }
 
-    // Find the assignment.
     const assignment = await Assignment.findById(assignmentId);
 
     if (!assignment) {
@@ -492,16 +526,15 @@ export const submitAssignment = async (req, res) => {
       });
     }
 
-    // School isolation.
     if (
-      assignment.school.toString() !== student.school.toString()
+      assignment.school.toString() !==
+      student.school.toString()
     ) {
       return res.status(403).json({
         message: "You are not authorized to submit this assignment",
       });
     }
 
-    // Make sure the assignment is for the student's class.
     if (
       assignment.schoolClass.toString() !==
       student.schoolClass.toString()
@@ -511,7 +544,6 @@ export const submitAssignment = async (req, res) => {
       });
     }
 
-    // Make sure the assignment belongs to the student's academic session.
     if (
       assignment.academicSession.toString() !==
       student.academicSession.toString()
@@ -522,25 +554,25 @@ export const submitAssignment = async (req, res) => {
       });
     }
 
-    // Students can only submit published assignments.
     if (assignment.status !== "published") {
       return res.status(400).json({
-        message: "This assignment is not currently accepting submissions",
+        message:
+          "This assignment is not currently accepting submissions",
       });
     }
 
-    // Check the deadline.
     if (new Date() > new Date(assignment.dueDate)) {
       return res.status(400).json({
-        message: "The submission deadline for this assignment has passed",
+        message:
+          "The submission deadline for this assignment has passed",
       });
     }
 
-    // Prevent duplicate submissions.
     const existingSubmission =
       await AssignmentSubmission.findOne({
         assignment: assignment._id,
         student: student._id,
+        school: student.school,
       });
 
     if (existingSubmission) {
@@ -550,7 +582,6 @@ export const submitAssignment = async (req, res) => {
       });
     }
 
-    // Validate content/attachments.
     const hasContent =
       typeof content === "string" && content.trim().length > 0;
 
@@ -606,12 +637,7 @@ export const submitAssignment = async (req, res) => {
 
 export const getAssignmentSubmissions = async (req, res) => {
   try {
-    // Only teachers, school admins and super admins can view submissions.
-    if (
-      req.user.role !== "teacher" &&
-      req.user.role !== "schoolAdmin" &&
-      req.user.role !== "superAdmin"
-    ) {
+    if (!isStaffRole(req.user.role)) {
       return res.status(403).json({
         message: "You are not authorized to view assignment submissions",
       });
@@ -627,27 +653,7 @@ export const getAssignmentSubmissions = async (req, res) => {
       });
     }
 
-    /*
-     * Teachers can only access assignments they created/own.
-     */
-    if (
-      req.user.role === "teacher" &&
-      assignment.teacher.toString() !== req.user._id.toString()
-    ) {
-      return res.status(403).json({
-        message:
-          "You are not authorized to view submissions for this assignment",
-      });
-    }
-
-    /*
-     * School admins can only access assignments belonging
-     * to their school.
-     */
-    if (
-      req.user.role === "schoolAdmin" &&
-      assignment.school.toString() !== req.user.school.toString()
-    ) {
+    if (!isAssignmentManager(req, assignment)) {
       return res.status(403).json({
         message:
           "You are not authorized to view submissions for this assignment",
@@ -693,12 +699,7 @@ export const getAssignmentSubmissions = async (req, res) => {
 
 export const getAssignmentSubmission = async (req, res) => {
   try {
-    // Only teachers, school admins and super admins can view submissions.
-    if (
-      req.user.role !== "teacher" &&
-      req.user.role !== "schoolAdmin" &&
-      req.user.role !== "superAdmin"
-    ) {
+    if (!isStaffRole(req.user.role)) {
       return res.status(403).json({
         message: "You are not authorized to view assignment submissions",
       });
@@ -714,22 +715,7 @@ export const getAssignmentSubmission = async (req, res) => {
       });
     }
 
-    // Teacher ownership check.
-    if (
-      req.user.role === "teacher" &&
-      assignment.teacher.toString() !== req.user._id.toString()
-    ) {
-      return res.status(403).json({
-        message:
-          "You are not authorized to view this assignment submission",
-      });
-    }
-
-    // School isolation for school admins.
-    if (
-      req.user.role === "schoolAdmin" &&
-      assignment.school.toString() !== req.user.school.toString()
-    ) {
+    if (!isAssignmentManager(req, assignment)) {
       return res.status(403).json({
         message:
           "You are not authorized to view this assignment submission",
@@ -776,12 +762,7 @@ export const getAssignmentSubmission = async (req, res) => {
 
 export const gradeAssignmentSubmission = async (req, res) => {
   try {
-    // Only teachers, school admins and super admins can grade.
-    if (
-      req.user.role !== "teacher" &&
-      req.user.role !== "schoolAdmin" &&
-      req.user.role !== "superAdmin"
-    ) {
+    if (!isStaffRole(req.user.role)) {
       return res.status(403).json({
         message: "You are not authorized to grade submissions",
       });
@@ -790,7 +771,6 @@ export const gradeAssignmentSubmission = async (req, res) => {
     const { assignmentId, submissionId } = req.params;
     const { score, feedback } = req.body;
 
-    // Validate score.
     if (score === undefined || score === null || score === "") {
       return res.status(400).json({
         message: "Score is required",
@@ -811,7 +791,6 @@ export const gradeAssignmentSubmission = async (req, res) => {
       });
     }
 
-    // Find assignment.
     const assignment = await Assignment.findById(assignmentId);
 
     if (!assignment) {
@@ -820,29 +799,13 @@ export const gradeAssignmentSubmission = async (req, res) => {
       });
     }
 
-    // Teachers can only grade their own assignments.
-    if (
-      req.user.role === "teacher" &&
-      assignment.teacher.toString() !== req.user._id.toString()
-    ) {
+    if (!isAssignmentManager(req, assignment)) {
       return res.status(403).json({
         message:
           "You are not authorized to grade submissions for this assignment",
       });
     }
 
-    // School admins can only grade assignments from their school.
-    if (
-      req.user.role === "schoolAdmin" &&
-      assignment.school.toString() !== req.user.school.toString()
-    ) {
-      return res.status(403).json({
-        message:
-          "You are not authorized to grade submissions for this assignment",
-      });
-    }
-
-    // Find the submission belonging to this assignment.
     const submission = await AssignmentSubmission.findOne({
       _id: submissionId,
       assignment: assignment._id,
@@ -855,14 +818,14 @@ export const gradeAssignmentSubmission = async (req, res) => {
       });
     }
 
-    // Make sure the submission actually contains something to grade.
     if (
       !submission.content?.trim() &&
       (!Array.isArray(submission.attachments) ||
         submission.attachments.length === 0)
     ) {
       return res.status(400).json({
-        message: "This submission has no content or attachments to grade",
+        message:
+          "This submission has no content or attachments to grade",
       });
     }
 
@@ -897,11 +860,20 @@ export const gradeAssignmentSubmission = async (req, res) => {
   }
 };
 
-// @desc    Publish an assignment
-// @route   PATCH /api/assignments/:assignmentId/publish
-// @access  Teacher, School Admin, Super Admin
+/*
+|--------------------------------------------------------------------------
+| Publish Assignment
+|--------------------------------------------------------------------------
+*/
+
 export const publishAssignment = async (req, res) => {
   try {
+    if (!isStaffRole(req.user.role)) {
+      return res.status(403).json({
+        message: "You are not authorized to publish assignments",
+      });
+    }
+
     const { assignmentId } = req.params;
 
     const assignment = await Assignment.findById(assignmentId);
@@ -912,27 +884,12 @@ export const publishAssignment = async (req, res) => {
       });
     }
 
-    // Teacher can only publish their own assignment
-    if (
-      req.user.role === "teacher" &&
-      assignment.teacher.toString() !== req.user._id.toString()
-    ) {
+    if (!isAssignmentManager(req, assignment)) {
       return res.status(403).json({
         message: "You are not authorized to publish this assignment",
       });
     }
 
-    // School admin can only publish assignments belonging to their school
-    if (
-      req.user.role === "schoolAdmin" &&
-      assignment.school.toString() !== req.user.school.toString()
-    ) {
-      return res.status(403).json({
-        message: "You are not authorized to publish this assignment",
-      });
-    }
-
-    // Only draft assignments can be published
     if (assignment.status !== "draft") {
       return res.status(400).json({
         message: `Assignment cannot be published because it is already ${assignment.status}`,
@@ -952,17 +909,24 @@ export const publishAssignment = async (req, res) => {
 
     return res.status(500).json({
       message: "Failed to publish assignment",
-      error: error.message,
     });
   }
 };
 
+/*
+|--------------------------------------------------------------------------
+| Close Assignment
+|--------------------------------------------------------------------------
+*/
 
-// @desc    Close an assignment
-// @route   PATCH /api/assignments/:assignmentId/close
-// @access  Teacher, School Admin, Super Admin
 export const closeAssignment = async (req, res) => {
   try {
+    if (!isStaffRole(req.user.role)) {
+      return res.status(403).json({
+        message: "You are not authorized to close assignments",
+      });
+    }
+
     const { assignmentId } = req.params;
 
     const assignment = await Assignment.findById(assignmentId);
@@ -973,27 +937,12 @@ export const closeAssignment = async (req, res) => {
       });
     }
 
-    // Teacher can only close their own assignment
-    if (
-      req.user.role === "teacher" &&
-      assignment.teacher.toString() !== req.user._id.toString()
-    ) {
+    if (!isAssignmentManager(req, assignment)) {
       return res.status(403).json({
         message: "You are not authorized to close this assignment",
       });
     }
 
-    // School admin can only close assignments belonging to their school
-    if (
-      req.user.role === "schoolAdmin" &&
-      assignment.school.toString() !== req.user.school.toString()
-    ) {
-      return res.status(403).json({
-        message: "You are not authorized to close this assignment",
-      });
-    }
-
-    // Only published assignments can be closed
     if (assignment.status !== "published") {
       return res.status(400).json({
         message: `Assignment cannot be closed because it is currently ${assignment.status}`,
@@ -1013,7 +962,6 @@ export const closeAssignment = async (req, res) => {
 
     return res.status(500).json({
       message: "Failed to close assignment",
-      error: error.message,
     });
   }
 };

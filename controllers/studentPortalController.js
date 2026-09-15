@@ -2,19 +2,26 @@ import Student from "../models/Student.js";
 import Assignment from "../models/Assignment.js";
 import AssignmentSubmission from "../models/AssignmentSubmission.js";
 import Attendance from "../models/Attendance.js";
+import AcademicTerm from "../models/AcademicTerm.js";
 
 export const getStudentDashboard = async (req, res) => {
   try {
     // Only students can access the student portal dashboard.
     if (req.user.role !== "student") {
       return res.status(403).json({
-        message: "Only students can access the student portal",
+        message: "Only students can access the student portal.",
       });
     }
 
-    // Find the student record linked to the logged-in user.
+    /*
+     * Find the student record linked to the logged-in user.
+     *
+     * We explicitly include the user's school to enforce
+     * school-level isolation.
+     */
     const student = await Student.findOne({
       user: req.user._id,
+      school: req.user.school,
       isActive: true,
     })
       .populate("school", "name address phone email")
@@ -24,41 +31,95 @@ export const getStudentDashboard = async (req, res) => {
 
     if (!student) {
       return res.status(404).json({
-        message: "Student record not found",
+        message: "Student record not found.",
       });
     }
 
     /*
-     * Get all published assignments for this student's:
-     * - school
-     * - academic session
-     * - class
+     * Validate required academic references.
      */
-    const assignments = await Assignment.find({
-      school: student.school._id,
-      academicSession: student.academicSession._id,
-      schoolClass: student.schoolClass._id,
-      status: "published",
-    })
-      .populate("term", "name startDate endDate")
-      .populate("subject", "name code")
-      .populate("teacher", "firstName lastName")
-      .sort({ dueDate: 1, createdAt: -1 });
+    if (
+      !student.school ||
+      !student.schoolClass ||
+      !student.academicSession
+    ) {
+      return res.status(409).json({
+        message:
+          "Student academic information is incomplete. Please contact the school administrator.",
+      });
+    }
 
     /*
-     * Get this student's submissions.
+     * Get the current active academic term for the student's school
+     * and academic session.
+     */
+    const currentTerm = await AcademicTerm.findOne({
+      school: student.school._id,
+      academicSession: student.academicSession._id,
+      isCurrent: true,
+      isActive: true,
+    }).select("_id name startDate endDate");
+
+    /*
+     * If there is no current term, the dashboard can still return
+     * the student's basic profile, but academic dashboard data should
+     * remain empty rather than querying unrelated terms.
+     */
+    let assignments = [];
+    let attendanceRecords = [];
+
+    if (currentTerm) {
+      /*
+       * Get published assignments for this student's:
+       * - school
+       * - academic session
+       * - current term
+       * - class
+       */
+      assignments = await Assignment.find({
+        school: student.school._id,
+        academicSession: student.academicSession._id,
+        term: currentTerm._id,
+        schoolClass: student.schoolClass._id,
+        status: "published",
+      })
+        .populate("term", "name startDate endDate")
+        .populate("subject", "name code")
+        .populate("teacher", "firstName lastName")
+        .sort({ dueDate: 1, createdAt: -1 });
+
+      /*
+       * Get this student's attendance records for the
+       * current academic term.
+       */
+      attendanceRecords = await Attendance.find({
+        school: student.school._id,
+        academicSession: student.academicSession._id,
+        term: currentTerm._id,
+        class: student.schoolClass._id,
+        student: student._id,
+      })
+        .populate("term", "name startDate endDate")
+        .sort({ date: -1 });
+    }
+
+    /*
+     * Get this student's assignment submissions.
      */
     const assignmentIds = assignments.map(
       (assignment) => assignment._id
     );
 
-    const submissions = await AssignmentSubmission.find({
-      assignment: { $in: assignmentIds },
-      student: student._id,
-      school: student.school._id,
-    }).select(
-      "assignment submittedAt score feedback status attachments content"
-    );
+    const submissions =
+      assignmentIds.length > 0
+        ? await AssignmentSubmission.find({
+            assignment: { $in: assignmentIds },
+            student: student._id,
+            school: student.school._id,
+          }).select(
+            "assignment submittedAt score feedback status attachments content"
+          )
+        : [];
 
     const submissionMap = new Map();
 
@@ -121,18 +182,6 @@ export const getStudentDashboard = async (req, res) => {
         (assignment) =>
           assignment.submissionStatus === "not_submitted"
       ).length;
-
-    /*
-     * Get this student's attendance records.
-     */
-    const attendanceRecords = await Attendance.find({
-      school: student.school._id,
-      academicSession: student.academicSession._id,
-      class: student.schoolClass._id,
-      student: student._id,
-    })
-      .populate("term", "name startDate endDate")
-      .sort({ date: -1 });
 
     /*
      * Attendance statistics.
@@ -202,6 +251,8 @@ export const getStudentDashboard = async (req, res) => {
 
       academicSession: student.academicSession,
 
+      currentTerm: currentTerm || null,
+
       parent: student.parent,
 
       assignmentStats: {
@@ -232,7 +283,7 @@ export const getStudentDashboard = async (req, res) => {
     console.error("Get student dashboard error:", error);
 
     return res.status(500).json({
-      message: "Server error while fetching student dashboard",
+      message: "Server error while fetching student dashboard.",
     });
   }
 };

@@ -18,6 +18,11 @@ import studentPortalRoutes from "./routes/studentPortalRoutes.js";
 import resultRoutes from "./routes/resultRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import paymentRoutes from "./routes/paymentRoutes.js";
+import parentRoutes from "./routes/parentRoutes.js";
+import feeStructureRoutes from "./routes/feeStructureRoutes.js";
+import studentFeeAccountRoutes from "./routes/studentFeeAccountRoutes.js";
+import parentPaymentRoutes from "./routes/parentPaymentRoutes.js";
+import announcementRoutes from "./routes/announcementRoutes.js";
 
 dotenv.config();
 
@@ -55,6 +60,11 @@ app.use("/api/student-portal", studentPortalRoutes);
 app.use("/api/results", resultRoutes);
 app.use("/api/subscriptions", subscriptionRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/parents", parentRoutes);
+app.use("/api/fee-structures", feeStructureRoutes);
+app.use("/api/student-fee-accounts", studentFeeAccountRoutes);
+app.use("/api/parent-payments", parentPaymentRoutes);
+app.use("/api/announcements", announcementRoutes);
 
 connectDB();
 
@@ -63,3 +73,4 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+

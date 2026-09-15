@@ -16,7 +16,10 @@ const canManageClassAttendance = (user, schoolClass) => {
   }
 
   // User must belong to the same school
-  if (!user.school || user.school.toString() !== schoolClass.school.toString()) {
+  if (
+    !user.school ||
+    user.school.toString() !== schoolClass.school.toString()
+  ) {
     return false;
   }
 
@@ -34,6 +37,49 @@ const canManageClassAttendance = (user, schoolClass) => {
   }
 
   return false;
+};
+
+// Validate the academic session/term relationship
+const validateAcademicContext = async ({
+  schoolId,
+  academicSessionId,
+  academicTermId,
+}) => {
+  const session = await AcademicSession.findOne({
+    _id: academicSessionId,
+    school: schoolId,
+    isActive: true,
+  });
+
+  if (!session) {
+    return {
+      valid: false,
+      status: 404,
+      message: "Academic session not found or inactive",
+    };
+  }
+
+  const academicTerm = await AcademicTerm.findOne({
+    _id: academicTermId,
+    school: schoolId,
+    academicSession: academicSessionId,
+    isActive: true,
+  });
+
+  if (!academicTerm) {
+    return {
+      valid: false,
+      status: 404,
+      message:
+        "Academic term not found, inactive, or does not belong to the selected academic session",
+    };
+  }
+
+  return {
+    valid: true,
+    session,
+    academicTerm,
+  };
 };
 
 // Mark attendance
@@ -64,7 +110,6 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Validate status
     const allowedStatuses = ["present", "absent", "late", "excused"];
 
     if (!allowedStatuses.includes(status)) {
@@ -89,7 +134,8 @@ export const markAttendance = async (req, res) => {
         req.user.school.toString() !== schoolClass.school.toString())
     ) {
       return res.status(403).json({
-        message: "You are not authorized to manage attendance for this school",
+        message:
+          "You are not authorized to manage attendance for this school",
       });
     }
 
@@ -108,49 +154,16 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Find student
-    const existingStudent = await Student.findById(student);
+    // Validate academic session and term
+    const academicContext = await validateAcademicContext({
+      schoolId: schoolClass.school,
+      academicSessionId: academicSession,
+      academicTermId: term,
+    });
 
-    if (!existingStudent) {
-      return res.status(404).json({
-        message: "Student not found",
-      });
-    }
-
-    // Make sure student belongs to the same school
-    if (
-      existingStudent.school.toString() !== schoolClass.school.toString()
-    ) {
-      return res.status(403).json({
-        message: "Student does not belong to this school",
-      });
-    }
-
-    // Make sure student belongs to the selected class
-    if (
-      existingStudent.schoolClass.toString() !== schoolClass._id.toString()
-    ) {
-      return res.status(400).json({
-        message: "Student does not belong to the selected class",
-      });
-    }
-
-    // Make sure student's academic session matches the class
-    if (
-      existingStudent.academicSession.toString() !==
-      schoolClass.academicSession.toString()
-    ) {
-      return res.status(400).json({
-        message: "Student and class belong to different academic sessions",
-      });
-    }
-
-    // Make sure the academic session exists
-    const session = await AcademicSession.findById(academicSession);
-
-    if (!session) {
-      return res.status(404).json({
-        message: "Academic session not found",
+    if (!academicContext.valid) {
+      return res.status(academicContext.status).json({
+        message: academicContext.message,
       });
     }
 
@@ -164,12 +177,42 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Make sure term exists
-    const academicTerm = await AcademicTerm.findById(term);
+    // Find student
+    const existingStudent = await Student.findById(student);
 
-    if (!academicTerm) {
+    if (!existingStudent) {
       return res.status(404).json({
-        message: "Academic term not found",
+        message: "Student not found",
+      });
+    }
+
+    // Make sure student belongs to the same school
+    if (
+      existingStudent.school.toString() !==
+      schoolClass.school.toString()
+    ) {
+      return res.status(403).json({
+        message: "Student does not belong to this school",
+      });
+    }
+
+    // Make sure student belongs to the selected class
+    if (
+      existingStudent.schoolClass.toString() !==
+      schoolClass._id.toString()
+    ) {
+      return res.status(400).json({
+        message: "Student does not belong to the selected class",
+      });
+    }
+
+    // Make sure student's academic session matches the class
+    if (
+      existingStudent.academicSession.toString() !==
+      schoolClass.academicSession.toString()
+    ) {
+      return res.status(400).json({
+        message: "Student and class belong to different academic sessions",
       });
     }
 
@@ -270,6 +313,19 @@ export const getClassAttendance = async (req, res) => {
       });
     }
 
+    // Validate academic term against the class session
+    const academicContext = await validateAcademicContext({
+      schoolId: schoolClass.school,
+      academicSessionId: schoolClass.academicSession,
+      academicTermId: term,
+    });
+
+    if (!academicContext.valid) {
+      return res.status(academicContext.status).json({
+        message: academicContext.message,
+      });
+    }
+
     const startDate = new Date(`${date}T00:00:00.000Z`);
     const endDate = new Date(`${date}T23:59:59.999Z`);
 
@@ -329,15 +385,15 @@ export const getStudentAttendance = async (req, res) => {
     }
 
     // Students can only view their own attendance
-   if (
-  req.user.role === "student" &&
-  (!student.user ||
-    student.user.toString() !== req.user._id.toString())
-) {
-  return res.status(403).json({
-    message: "You are not authorized to view this attendance",
-  });
-}
+    if (
+      req.user.role === "student" &&
+      (!student.user ||
+        student.user.toString() !== req.user._id.toString())
+    ) {
+      return res.status(403).json({
+        message: "You are not authorized to view this attendance",
+      });
+    }
 
     // Parents can only view their own child's attendance
     if (
@@ -371,6 +427,18 @@ export const getStudentAttendance = async (req, res) => {
     };
 
     if (term) {
+      const academicContext = await validateAcademicContext({
+        schoolId: student.school,
+        academicSessionId: student.academicSession,
+        academicTermId: term,
+      });
+
+      if (!academicContext.valid) {
+        return res.status(academicContext.status).json({
+          message: academicContext.message,
+        });
+      }
+
       query.term = term;
     }
 
@@ -476,6 +544,7 @@ export const updateAttendance = async (req, res) => {
   }
 };
 
+// Get student attendance summary
 export const getStudentAttendanceSummary = async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -498,7 +567,8 @@ export const getStudentAttendanceSummary = async (req, res) => {
     // School isolation
     if (
       req.user.role !== "superAdmin" &&
-      student.school.toString() !== req.user.school.toString()
+      (!req.user.school ||
+        req.user.school.toString() !== student.school.toString())
     ) {
       return res.status(403).json({
         message: "You are not authorized to view this student's attendance",
@@ -508,7 +578,8 @@ export const getStudentAttendanceSummary = async (req, res) => {
     // Parents can only view their own child's attendance
     if (
       req.user.role === "parent" &&
-      student.parent?.toString() !== req.user._id.toString()
+      (!student.parent ||
+        student.parent.toString() !== req.user._id.toString())
     ) {
       return res.status(403).json({
         message: "You are not authorized to view this student's attendance",
@@ -516,15 +587,43 @@ export const getStudentAttendanceSummary = async (req, res) => {
     }
 
     // Students can only view their own attendance
-   if (
-  req.user.role === "student" &&
-  (!student.user ||
-    student.user.toString() !== req.user._id.toString())
-) {
-  return res.status(403).json({
-    message: "You are not authorized to view this attendance",
-  });
-}
+    if (
+      req.user.role === "student" &&
+      (!student.user ||
+        student.user.toString() !== req.user._id.toString())
+    ) {
+      return res.status(403).json({
+        message: "You are not authorized to view this attendance",
+      });
+    }
+
+    // Teachers can view students in their assigned class
+    if (req.user.role === "teacher") {
+      const schoolClass = await SchoolClass.findById(student.schoolClass);
+
+      if (
+        !schoolClass ||
+        !schoolClass.classTeacher ||
+        schoolClass.classTeacher.toString() !== req.user._id.toString()
+      ) {
+        return res.status(403).json({
+          message: "You are not authorized to view this student's attendance",
+        });
+      }
+    }
+
+    // Validate academic term against the student's academic session
+    const academicContext = await validateAcademicContext({
+      schoolId: student.school,
+      academicSessionId: student.academicSession,
+      academicTermId: term,
+    });
+
+    if (!academicContext.valid) {
+      return res.status(academicContext.status).json({
+        message: academicContext.message,
+      });
+    }
 
     const records = await Attendance.find({
       school: student.school,
@@ -573,10 +672,10 @@ export const getStudentAttendanceSummary = async (req, res) => {
   }
 };
 
+// Get class attendance summary
 export const getClassAttendanceSummary = async (req, res) => {
   try {
-    const { classId } = req.query;
-    const { term } = req.query;
+    const { classId, term } = req.query;
 
     if (!classId || !term) {
       return res.status(400).json({
@@ -595,7 +694,8 @@ export const getClassAttendanceSummary = async (req, res) => {
     // School isolation
     if (
       req.user.role !== "superAdmin" &&
-      schoolClass.school.toString() !== req.user.school.toString()
+      (!req.user.school ||
+        req.user.school.toString() !== schoolClass.school.toString())
     ) {
       return res.status(403).json({
         message: "You are not authorized to view this class attendance",
@@ -622,14 +722,25 @@ export const getClassAttendanceSummary = async (req, res) => {
       });
     }
 
+    // Validate academic term against the class session
+    const academicContext = await validateAcademicContext({
+      schoolId: schoolClass.school,
+      academicSessionId: schoolClass.academicSession,
+      academicTermId: term,
+    });
+
+    if (!academicContext.valid) {
+      return res.status(academicContext.status).json({
+        message: academicContext.message,
+      });
+    }
+
     const students = await Student.find({
       school: schoolClass.school,
       schoolClass: schoolClass._id,
       academicSession: schoolClass.academicSession,
       isActive: true,
-    }).select(
-      "_id studentId firstName middleName lastName"
-    );
+    }).select("_id studentId firstName middleName lastName");
 
     const attendanceRecords = await Attendance.find({
       school: schoolClass.school,
@@ -697,6 +808,7 @@ export const getClassAttendanceSummary = async (req, res) => {
   }
 };
 
+// Get current student's attendance
 export const getMyAttendance = async (req, res) => {
   try {
     if (req.user.role !== "student") {
@@ -722,6 +834,18 @@ export const getMyAttendance = async (req, res) => {
     };
 
     if (req.query.term) {
+      const academicContext = await validateAcademicContext({
+        schoolId: student.school,
+        academicSessionId: student.academicSession,
+        academicTermId: req.query.term,
+      });
+
+      if (!academicContext.valid) {
+        return res.status(academicContext.status).json({
+          message: academicContext.message,
+        });
+      }
+
       filter.term = req.query.term;
     }
 
@@ -750,6 +874,7 @@ export const getMyAttendance = async (req, res) => {
   }
 };
 
+// Get current student's attendance summary
 export const getMyAttendanceSummary = async (req, res) => {
   try {
     if (req.user.role !== "student") {
@@ -775,6 +900,18 @@ export const getMyAttendanceSummary = async (req, res) => {
     };
 
     if (req.query.term) {
+      const academicContext = await validateAcademicContext({
+        schoolId: student.school,
+        academicSessionId: student.academicSession,
+        academicTermId: req.query.term,
+      });
+
+      if (!academicContext.valid) {
+        return res.status(academicContext.status).json({
+          message: academicContext.message,
+        });
+      }
+
       filter.term = req.query.term;
     }
 
@@ -831,4 +968,6 @@ export const getMyAttendanceSummary = async (req, res) => {
     });
   }
 };
+
+
 

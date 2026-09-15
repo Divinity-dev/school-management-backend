@@ -1035,15 +1035,26 @@ export const verifyAdditionalSeatsPayment = async (
     // Verify transaction status
     // --------------------------------------------------
     if (transaction.status !== "success") {
-      payment.status = "failed";
-      await payment.save();
+  // An abandoned checkout is not a failed payment.
+  // Keep the payment pending so the customer can retry.
+  if (transaction.status === "abandoned") {
+    return res.status(400).json({
+      message:
+        "Payment was abandoned. No seats were added.",
+      paymentStatus: transaction.status,
+      payment,
+    });
+  }
 
-      return res.status(400).json({
-        message:
-          "Paystack transaction was not successful.",
-        paymentStatus: transaction.status,
-      });
-    }
+  payment.status = "failed";
+  await payment.save();
+
+  return res.status(400).json({
+    message:
+      "Paystack transaction was not successful.",
+    paymentStatus: transaction.status,
+  });
+}
 
     // --------------------------------------------------
     // Verify currency
