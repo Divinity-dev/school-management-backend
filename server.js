@@ -1,14 +1,45 @@
 import dotenv from "dotenv";
 import express from "express";
 import connectDB from "./config/db.js";
+
 import authRoutes from "./routes/authRoutes.js";
 import schoolRoutes from "./routes/schoolRoutes.js";
 import schoolAdminRoutes from "./routes/schoolAdminRoutes.js";
+import academicSessionRoutes from "./routes/academicSessionRoutes.js";
+import academicTermRoutes from "./routes/academicTermRoutes.js";
+import schoolClassRoutes from "./routes/schoolClassRoutes.js";
+import studentRoutes from "./routes/studentRoutes.js";
+import teacherRoutes from "./routes/teacherRoutes.js";
+import subjectRoutes from "./routes/subjectRoutes.js";
+import subjectAssignmentRoutes from "./routes/subjectAssignmentRoutes.js";
+import attendanceRoutes from "./routes/attendanceRoutes.js";
+import assignmentRoutes from "./routes/assignmentRoutes.js";
+import studentPortalRoutes from "./routes/studentPortalRoutes.js";
+import resultRoutes from "./routes/resultRoutes.js";
+import subscriptionRoutes from "./routes/subscriptionRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
+import parentRoutes from "./routes/parentRoutes.js";
+import feeStructureRoutes from "./routes/feeStructureRoutes.js";
+import studentFeeAccountRoutes from "./routes/studentFeeAccountRoutes.js";
+import parentPaymentRoutes from "./routes/parentPaymentRoutes.js";
+import announcementRoutes from "./routes/announcementRoutes.js";
 
 dotenv.config();
 
 const app = express();
 
+/*
+ * Paystack webhook
+ *
+ * This route must receive the raw request body so that
+ * Paystack's x-paystack-signature can be verified correctly.
+ */
+app.use(
+  "/api/payments/webhook",
+  express.raw({ type: "application/json" })
+);
+
+// Normal JSON parsing for all other requests
 app.use(express.json());
 
 // routes
@@ -16,6 +47,24 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/schools", schoolRoutes);
 app.use("/api/school-admins", schoolAdminRoutes);
+app.use("/api/academic-sessions", academicSessionRoutes);
+app.use("/api/academic-terms", academicTermRoutes);
+app.use("/api/classes", schoolClassRoutes);
+app.use("/api/students", studentRoutes);
+app.use("/api/teachers", teacherRoutes);
+app.use("/api/subjects", subjectRoutes);
+app.use("/api/subject-assignments", subjectAssignmentRoutes);
+app.use("/api/attendance", attendanceRoutes);
+app.use("/api/assignments", assignmentRoutes);
+app.use("/api/student-portal", studentPortalRoutes);
+app.use("/api/results", resultRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/parents", parentRoutes);
+app.use("/api/fee-structures", feeStructureRoutes);
+app.use("/api/student-fee-accounts", studentFeeAccountRoutes);
+app.use("/api/parent-payments", parentPaymentRoutes);
+app.use("/api/announcements", announcementRoutes);
 
 connectDB();
 
@@ -24,3 +73,4 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+

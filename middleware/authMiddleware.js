@@ -58,3 +58,39 @@ export const authorize = (...roles) => {
     next();
   };
 };
+
+export const authorizeSchool = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      message: "Not authorized",
+    });
+  }
+
+  // Super admins can access all schools
+  if (req.user.role === "superAdmin") {
+    return next();
+  }
+
+  if (!req.user.school) {
+    return res.status(403).json({
+      message: "You are not associated with a school",
+    });
+  }
+
+  const requestedSchoolId =
+    req.params.schoolId || req.body.schoolId;
+
+  if (!requestedSchoolId) {
+    return res.status(400).json({
+      message: "School ID is required",
+    });
+  }
+
+  if (req.user.school.toString() !== requestedSchoolId.toString()) {
+    return res.status(403).json({
+      message: "You do not have access to this school",
+    });
+  }
+
+  next();
+};
