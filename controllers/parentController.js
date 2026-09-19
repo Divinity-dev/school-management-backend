@@ -494,3 +494,35 @@ export const getMyChildPayments = async (req, res) => {
     });
   }
 };
+
+export const getParents = async (req, res) => {
+  try {
+    const schoolId = req.user?.school?._id || req.user?.school;
+
+    if (!schoolId) {
+      return res.status(400).json({
+        message: "School information is missing.",
+      });
+    }
+
+    const parents = await User.find({
+      school: schoolId,
+      role: "parent",
+      isActive: true,
+    })
+      .select("firstName lastName email phone")
+      .sort({ firstName: 1, lastName: 1 });
+
+    return res.status(200).json({
+      message: "Parents retrieved successfully.",
+      count: parents.length,
+      parents,
+    });
+  } catch (error) {
+    console.error("Get parents error:", error);
+
+    return res.status(500).json({
+      message: "Server error while retrieving parents.",
+    });
+  }
+};

@@ -8,6 +8,7 @@ import {
   getMyChildResults,
   getMyChildFees,
   getMyChildPayments,
+   getParents
 } from "../controllers/parentController.js";
 
 import {
@@ -47,6 +48,12 @@ router.get(
   "/children/:studentId/fees",
   authorize("parent"),
   getMyChildFees
+);
+
+router.get(
+  "/",
+  authorize("schoolAdmin"),
+  getParents
 );
 
 router.get(

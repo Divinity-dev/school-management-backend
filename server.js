@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import express from "express";
 import connectDB from "./config/db.js";
 
@@ -23,10 +23,18 @@ import feeStructureRoutes from "./routes/feeStructureRoutes.js";
 import studentFeeAccountRoutes from "./routes/studentFeeAccountRoutes.js";
 import parentPaymentRoutes from "./routes/parentPaymentRoutes.js";
 import announcementRoutes from "./routes/announcementRoutes.js";
+import cors from "cors";
 
-dotenv.config();
+
 
 const app = express();
+
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    credentials: true,
+  })
+);
 
 /*
  * Paystack webhook
