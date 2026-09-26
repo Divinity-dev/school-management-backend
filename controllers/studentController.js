@@ -675,6 +675,117 @@ export const deactivateStudent = async (req, res) => {
   }
 };
 
+// @desc    Get student enrollment growth for an academic session
+// @route   GET /api/students/growth?academicSession=:sessionId
+// @access  Private
+export const getStudentGrowth = async (req, res) => {
+  try {
+    const { academicSession } = req.query;
 
+    if (!academicSession) {
+      return res.status(400).json({
+        message: "Academic session is required",
+      });
+    }
 
+    // --------------------------------------------------
+    // Make sure the academic session belongs to this school
+    // --------------------------------------------------
+    const session = await AcademicSession.findOne({
+      _id: academicSession,
+      school: req.user.school,
+    });
 
+    if (!session) {
+      return res.status(404).json({
+        message: "Academic session not found",
+      });
+    }
+
+    // --------------------------------------------------
+    // Get all students admitted during this session
+    // --------------------------------------------------
+    const students = await Student.find({
+      school: req.user.school,
+      academicSession: session._id,
+      admissionDate: {
+        $gte: session.startDate,
+        $lte: session.endDate,
+      },
+    })
+      .select("admissionDate")
+      .sort({ admissionDate: 1 });
+
+    // --------------------------------------------------
+    // Create one entry for every month in the session
+    // --------------------------------------------------
+    const startDate = new Date(session.startDate);
+    const endDate = new Date(session.endDate);
+
+    const months = [];
+
+    let currentDate = new Date(
+      startDate.getFullYear(),
+      startDate.getMonth(),
+      1
+    );
+
+    while (currentDate <= endDate) {
+      months.push({
+        year: currentDate.getFullYear(),
+        month: currentDate.getMonth(),
+      });
+
+      currentDate.setMonth(currentDate.getMonth() + 1);
+    }
+
+    // --------------------------------------------------
+    // Count admissions by month
+    // --------------------------------------------------
+    const monthlyAdmissions = {};
+
+    students.forEach((student) => {
+      const admissionDate = new Date(student.admissionDate);
+
+      const key = `${admissionDate.getFullYear()}-${admissionDate.getMonth()}`;
+
+      monthlyAdmissions[key] =
+        (monthlyAdmissions[key] || 0) + 1;
+    });
+
+    // --------------------------------------------------
+    // Build cumulative growth data
+    // --------------------------------------------------
+    let cumulativeStudents = 0;
+
+    const growth = months.map(({ year, month }) => {
+      const key = `${year}-${month}`;
+
+      cumulativeStudents += monthlyAdmissions[key] || 0;
+
+      return {
+        month: new Date(year, month, 1).toLocaleString(
+          "en-US",
+          { month: "short" }
+        ),
+        students: cumulativeStudents,
+      };
+    });
+
+    return res.status(200).json({
+      academicSession: {
+        id: session._id,
+        name: session.name,
+        startDate: session.startDate,
+        endDate: session.endDate,
+      },
+      growth,
+    });
+  } catch (error) {
+    console.error("Get student growth error:", error);
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+};

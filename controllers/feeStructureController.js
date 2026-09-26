@@ -342,3 +342,64 @@ return res.status(500).json({
 
 }
 };
+
+export const getFeeStructures = async (req, res) => {
+  try {
+    const schoolId = getSchoolId(req);
+
+    if (!schoolId) {
+      return res.status(400).json({
+        message: "School information is missing.",
+      });
+    }
+
+    const feeStructures = await FeeStructure.find({
+      school: schoolId,
+    })
+      .populate("academicSession", "name")
+      .populate("academicTerm", "name academicSession")
+      .populate("schoolClasses", "name arm section")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      feeStructures,
+    });
+  } catch (error) {
+    console.error("Get fee structures error:", error);
+
+    return res.status(500).json({
+      message: "Server error while fetching fee structures.",
+    });
+  }
+};
+
+export const getFeeStructure = async (req, res) => {
+  try {
+    const schoolId = getSchoolId(req);
+    const { feeStructureId } = req.params;
+
+    if (!schoolId) {
+      return res.status(400).json({
+        message: "School information is missing.",
+      });
+    }
+
+    const feeStructure = await getPopulatedFeeStructure(feeStructureId);
+
+    if (!feeStructure || feeStructure.school.toString() !== schoolId.toString()) {
+      return res.status(404).json({
+        message: "Fee structure not found.",
+      });
+    }
+
+    return res.status(200).json({
+      feeStructure,
+    });
+  } catch (error) {
+    console.error("Get fee structure error:", error);
+
+    return res.status(500).json({
+      message: "Server error while fetching fee structure.",
+    });
+  }
+};

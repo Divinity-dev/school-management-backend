@@ -9,6 +9,7 @@ import {
   getSchoolFeePayments,
   getSchoolFeePaymentById,
   recordOfflineSchoolFeePayment,
+  updateOfflineSchoolFeePayment,
 } from "../controllers/paymentController.js";
 
 import {
@@ -18,8 +19,11 @@ import {
 
 const router = express.Router();
 
+// ===============================
 // Paystack webhook
 // IMPORTANT: This must NOT be protected by JWT.
+// ===============================
+
 router.post(
   "/webhook",
   handlePaystackWebhook
@@ -43,6 +47,7 @@ router.get(
   getSchoolFeePayments
 );
 
+// Offline school fee payment
 router.post(
   "/school-fees/offline",
   protect,
@@ -50,6 +55,14 @@ router.post(
   recordOfflineSchoolFeePayment
 );
 
+router.put(
+  "/school-fees/:id/offline",
+  protect,
+  authorize("schoolAdmin"),
+  updateOfflineSchoolFeePayment
+);
+
+// Online school fee payment
 router.post(
   "/school-fees/initialize",
   protect,
@@ -78,4 +91,4 @@ router.get(
   getSchoolFeePaymentById
 );
 
-export default router;
+export default router

@@ -6,6 +6,7 @@ import {
   getStudents,
   getStudentsBySession,
   getStudentsByClass,
+  getStudentGrowth,
   getStudent,
   updateStudent,
   deactivateStudent,
@@ -15,6 +16,7 @@ import {
   protect,
   authorize,
 } from "../middleware/authMiddleware.js";
+
 import {
   requireActiveSubscription,
 } from "../middleware/subscriptionMiddleware.js";
@@ -25,15 +27,20 @@ const router = express.Router();
 router.use(protect);
 
 // View students
+
 router.get("/", getStudents);
 
 router.get("/session/:sessionId", getStudentsBySession);
 
 router.get("/class/:classId", getStudentsByClass);
 
+// Student enrollment growth
+router.get("/growth", getStudentGrowth);
+
 router.get("/:id", getStudent);
 
 // School administration
+
 router.post(
   "/",
   authorize("schoolAdmin"),
@@ -42,6 +49,7 @@ router.post(
 );
 
 // Create portal account for an existing student
+
 router.post(
   "/:id/create-account",
   authorize("schoolAdmin"),

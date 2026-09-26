@@ -2515,3 +2515,164 @@ export const submitTeacherResults = async (req, res) => {
     });
   }
 };
+
+export const getAdminResults = async (req, res) => {
+  try {
+    if (req.user.role !== "schoolAdmin") {
+      return res.status(403).json({
+        message: "Only school admins can view admin results.",
+      });
+    }
+
+    if (!req.user.school) {
+      return res.status(403).json({
+        message: "User is not associated with a school.",
+      });
+    }
+
+    const {
+      academicSession,
+      academicTerm,
+      schoolClass,
+      status,
+    } = req.query;
+
+    const validStatuses = [
+      "draft",
+      "pending_review",
+      "published",
+      "locked",
+    ];
+
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({
+        message: "Invalid result status.",
+        validStatuses,
+      });
+    }
+
+    // Validate school class if provided
+    if (schoolClass) {
+      const classExists = await SchoolClass.findOne({
+        _id: schoolClass,
+        school: req.user.school,
+      });
+
+      if (!classExists) {
+        return res.status(404).json({
+          message: "School class not found.",
+        });
+      }
+    }
+
+    // Validate academic session if provided
+    if (academicSession) {
+      const sessionExists = await AcademicSession.findOne({
+        _id: academicSession,
+        school: req.user.school,
+      });
+
+      if (!sessionExists) {
+        return res.status(404).json({
+          message: "Academic session not found.",
+        });
+      }
+    }
+
+    // Validate academic term if provided
+    if (academicTerm) {
+      const termQuery = {
+        _id: academicTerm,
+        school: req.user.school,
+      };
+
+      if (academicSession) {
+        termQuery.academicSession = academicSession;
+      }
+
+      const termExists = await AcademicTerm.findOne(termQuery);
+
+      if (!termExists) {
+        return res.status(404).json({
+          message: "Academic term not found.",
+        });
+      }
+    }
+
+    const query = {
+      school: req.user.school,
+    };
+
+    if (academicSession) {
+      query.academicSession = academicSession;
+    }
+
+    if (academicTerm) {
+      query.academicTerm = academicTerm;
+    }
+
+    if (schoolClass) {
+      query.schoolClass = schoolClass;
+    }
+
+    if (status) {
+      query.status = status;
+    }
+
+    const results = await Result.find(query)
+      .populate(
+        "student",
+        "studentId firstName middleName lastName email"
+      )
+      .populate(
+        "schoolClass",
+        "name arm section"
+      )
+      .populate(
+        "subject",
+        "name code"
+      )
+      .populate(
+        "academicSession",
+        "name"
+      )
+      .populate(
+        "academicTerm",
+        "name"
+      )
+      .populate(
+        "enteredBy",
+        "firstName middleName lastName email"
+      )
+      .sort({ createdAt: -1 });
+
+    const summary = {
+      totalResults: results.length,
+      draft: results.filter(
+        (result) => result.status === "draft"
+      ).length,
+      pendingReview: results.filter(
+        (result) => result.status === "pending_review"
+      ).length,
+      published: results.filter(
+        (result) => result.status === "published"
+      ).length,
+      locked: results.filter(
+        (result) => result.status === "locked"
+      ).length,
+    };
+
+    return res.status(200).json({
+      message: "Results retrieved successfully.",
+      summary,
+      results,
+    });
+  } catch (error) {
+    console.error("Get admin results error:", error);
+
+    return res.status(500).json({
+      message: "Failed to retrieve results.",
+      error: error.message,
+    });
+  }
+};

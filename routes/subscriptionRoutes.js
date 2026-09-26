@@ -1,7 +1,7 @@
 import express from "express";
 
 import {
-  createSubscription,
+  getSubscriptionPricing,
   initializeSubscriptionPayment,
   verifySubscriptionPayment,
   initializeAdditionalSeatsPayment,
@@ -18,20 +18,22 @@ import {
 
 const router = express.Router();
 
+// --------------------------------------------------
 // All subscription routes require authentication
+// --------------------------------------------------
 router.use(protect);
 
 // --------------------------------------------------
-// Create subscription
+// Subscription pricing
 // --------------------------------------------------
-router.post(
-  "/",
+router.get(
+  "/pricing",
   authorize("schoolAdmin"),
-  createSubscription
+  getSubscriptionPricing
 );
 
 // --------------------------------------------------
-// Initialize initial subscription payment
+// Initial subscription payment
 // --------------------------------------------------
 router.post(
   "/pay",
@@ -49,7 +51,7 @@ router.get(
 );
 
 // --------------------------------------------------
-// Initialize additional seats payment
+// Additional student seats
 // --------------------------------------------------
 router.post(
   "/add-seats/pay",
@@ -58,7 +60,7 @@ router.post(
 );
 
 // --------------------------------------------------
-// Verify additional seats payment
+// Verify additional student seats payment
 // --------------------------------------------------
 router.get(
   "/add-seats/payment/verify/:reference",
@@ -67,19 +69,21 @@ router.get(
 );
 
 // --------------------------------------------------
+// Get subscription for specific academic term
+// --------------------------------------------------
+router.get(
+  "/term",
+  authorize("schoolAdmin"),
+  getTermSubscription
+);
+
+// --------------------------------------------------
 // Get current subscription
 // --------------------------------------------------
 router.get(
   "/current",
+  authorize("schoolAdmin"),
   getCurrentSubscription
-);
-
-// --------------------------------------------------
-// Get subscription for a specific term
-// --------------------------------------------------
-router.get(
-  "/term",
-  getTermSubscription
 );
 
 // --------------------------------------------------
@@ -87,6 +91,7 @@ router.get(
 // --------------------------------------------------
 router.get(
   "/status",
+  authorize("schoolAdmin"),
   checkSubscriptionStatus
 );
 

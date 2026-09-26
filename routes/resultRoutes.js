@@ -14,6 +14,7 @@ import {
   getTeacherResults,
   getTeacherRoster,
   submitTeacherResults,
+  getAdminResults
 } from "../controllers/resultController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
@@ -31,6 +32,8 @@ router.post(
 
 // Read-only routes
 router.get("/my-results", protect, getMyResults);
+
+router.get("/admin-results", protect, getAdminResults);
 
 router.get(
   "/analytics/class-averages",

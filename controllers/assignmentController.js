@@ -965,3 +965,190 @@ export const closeAssignment = async (req, res) => {
     });
   }
 };
+
+// Get a single assignment
+export const getAssignment = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+
+    if (!isStaffRole(req.user.role)) {
+      return res.status(403).json({
+        message: "Not authorized to view assignments",
+      });
+    }
+
+    const assignment = await Assignment.findById(assignmentId)
+      .populate("academicSession", "name startDate endDate")
+      .populate("term", "name startDate endDate isCurrent")
+      .populate("schoolClass", "name level")
+      .populate("subject", "name code")
+      .populate("teacher", "firstName lastName email")
+      .populate("subjectAssignment");
+
+    if (!assignment) {
+      return res.status(404).json({
+        message: "Assignment not found",
+      });
+    }
+
+    if (!isAssignmentManager(req, assignment)) {
+      return res.status(403).json({
+        message: "Not authorized to view this assignment",
+      });
+    }
+
+    return res.status(200).json({
+      assignment,
+    });
+  } catch (error) {
+    console.error("Get assignment error:", error);
+
+    return res.status(500).json({
+      message: "Failed to get assignment",
+      error: error.message,
+    });
+  }
+};
+
+
+// Update an assignment
+export const updateAssignment = async (req, res) => {
+  try {
+    const { assignmentId } = req.params;
+
+    if (!isStaffRole(req.user.role)) {
+      return res.status(403).json({
+        message: "Not authorized to update assignments",
+      });
+    }
+
+    const assignment = await Assignment.findById(assignmentId);
+
+    if (!assignment) {
+      return res.status(404).json({
+        message: "Assignment not found",
+      });
+    }
+
+    if (!isAssignmentManager(req, assignment)) {
+      return res.status(403).json({
+        message: "Not authorized to update this assignment",
+      });
+    }
+
+    const {
+      term,
+      title,
+      description,
+      instructions,
+      dueDate,
+      attachmentUrl,
+      attachmentName,
+    } = req.body;
+
+    // Validate title
+    if (title !== undefined) {
+      if (!title || !title.trim()) {
+        return res.status(400).json({
+          message: "Assignment title is required",
+        });
+      }
+
+      if (title.trim().length > 200) {
+        return res.status(400).json({
+          message: "Assignment title cannot exceed 200 characters",
+        });
+      }
+
+      assignment.title = title.trim();
+    }
+
+    // Update optional text fields
+    if (description !== undefined) {
+      assignment.description = description?.trim() || "";
+    }
+
+    if (instructions !== undefined) {
+      assignment.instructions = instructions?.trim() || "";
+    }
+
+    if (attachmentUrl !== undefined) {
+      assignment.attachmentUrl = attachmentUrl?.trim() || "";
+    }
+
+    if (attachmentName !== undefined) {
+      assignment.attachmentName = attachmentName?.trim() || "";
+    }
+
+    // Validate and update term
+    if (term !== undefined) {
+      const selectedTerm = await AcademicTerm.findById(term);
+
+      if (!selectedTerm) {
+        return res.status(404).json({
+          message: "Academic term not found",
+        });
+      }
+
+      if (!selectedTerm.isActive) {
+        return res.status(400).json({
+          message: "Selected academic term is inactive",
+        });
+      }
+
+      if (
+        selectedTerm.school.toString() !== assignment.school.toString()
+      ) {
+        return res.status(403).json({
+          message: "Academic term does not belong to this school",
+        });
+      }
+
+      if (
+        selectedTerm.academicSession.toString() !==
+        assignment.academicSession.toString()
+      ) {
+        return res.status(400).json({
+          message: "Academic term does not belong to the assignment session",
+        });
+      }
+
+      assignment.term = term;
+    }
+
+    // Validate and update due date
+    if (dueDate !== undefined) {
+      const parsedDueDate = new Date(dueDate);
+
+      if (Number.isNaN(parsedDueDate.getTime())) {
+        return res.status(400).json({
+          message: "Invalid due date",
+        });
+      }
+
+      assignment.dueDate = parsedDueDate;
+    }
+
+    await assignment.save();
+
+    const updatedAssignment = await Assignment.findById(assignment._id)
+      .populate("academicSession", "name startDate endDate")
+      .populate("term", "name startDate endDate isCurrent")
+      .populate("schoolClass", "name level")
+      .populate("subject", "name code")
+      .populate("teacher", "firstName lastName email")
+      .populate("subjectAssignment");
+
+    return res.status(200).json({
+      message: "Assignment updated successfully",
+      assignment: updatedAssignment,
+    });
+  } catch (error) {
+    console.error("Update assignment error:", error);
+
+    return res.status(500).json({
+      message: "Failed to update assignment",
+      error: error.message,
+    });
+  }
+};

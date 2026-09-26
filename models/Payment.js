@@ -103,6 +103,7 @@ const paymentSchema = new mongoose.Schema(
         "cancelled",
       ],
       default: "pending",
+      required: true,
       index: true,
     },
 
@@ -113,7 +114,7 @@ const paymentSchema = new mongoose.Schema(
 
     metadata: {
       type: mongoose.Schema.Types.Mixed,
-      default: {},
+       default: () => ({}),
     },
   },
   {
@@ -121,18 +122,32 @@ const paymentSchema = new mongoose.Schema(
   }
 );
 
-// A Paystack transaction must belong to only one payment.
-// sparse allows multiple null values.
+// ============================================================
+// PAYSTACK TRANSACTION ID
+// ============================================================
+//
+// A Paystack transaction can belong to only one payment.
+// sparse allows multiple documents where the value is null.
+//
+
 paymentSchema.index(
-  { paystackTransactionId: 1 },
+  {
+    paystackTransactionId: 1,
+  },
   {
     unique: true,
     sparse: true,
   }
 );
 
-// Prevent multiple unfinished Paystack school-fee payments
-// for the same fee account.
+// ============================================================
+// SCHOOL FEE PAYMENTS
+// ============================================================
+//
+// Prevent multiple pending Paystack payments for the same
+// student fee account.
+//
+
 paymentSchema.index(
   {
     school: 1,
@@ -149,8 +164,53 @@ paymentSchema.index(
   }
 );
 
-// Prevent multiple unfinished subscription payments
+// ============================================================
+// INITIAL SUBSCRIPTION PAYMENTS
+// ============================================================
+//
+// IMPORTANT:
+//
+// An initial subscription payment does NOT have a subscription
+// yet because the subscription is created only after successful
+// payment.
+//
+// Therefore we cannot use:
+//
+//   school + subscription + type
+//
+// for initial subscriptions.
+//
+// Instead, there can only be one unfinished initial subscription
+// payment for a school/session/term.
+//
+
+paymentSchema.index(
+  {
+    school: 1,
+    academicSession: 1,
+    academicTerm: 1,
+    type: 1,
+  },
+  {
+    unique: true,
+    partialFilterExpression: {
+      type: "initial_subscription",
+      status: "pending",
+      provider: "paystack",
+    },
+  }
+);
+
+// ============================================================
+// ADDITIONAL SEAT PAYMENTS
+// ============================================================
+//
+// Additional-seat payments DO have an existing subscription.
+//
+// Prevent multiple unfinished Paystack additional-seat payments
 // for the same subscription.
+//
+
 paymentSchema.index(
   {
     school: 1,
@@ -160,13 +220,19 @@ paymentSchema.index(
   {
     unique: true,
     partialFilterExpression: {
-      subscription: { $type: "objectId" },
+      type: "additional_seats",
+      subscription: {
+        $type: "objectId",
+      },
       status: "pending",
       provider: "paystack",
     },
   }
 );
 
-const Payment = mongoose.model("Payment", paymentSchema);
+const Payment = mongoose.model(
+  "Payment",
+  paymentSchema
+);
 
 export default Payment;

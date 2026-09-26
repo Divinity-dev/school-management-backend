@@ -11,6 +11,8 @@ import {
   gradeAssignmentSubmission,
   publishAssignment,
   closeAssignment,
+  getAssignment,
+updateAssignment,
 } from "../controllers/assignmentController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
@@ -42,6 +44,15 @@ router.get(
   getStudentAssignments
 );
 
+router.get("/:assignmentId", protect, requireActiveSubscription, getAssignment);
+
+router.put(
+  "/:assignmentId",
+  protect,
+  requireActiveSubscription,
+  updateAssignment
+);
+
 // Student's own submission/result
 router.get(
   "/:assignmentId/my-submission",
@@ -49,6 +60,7 @@ router.get(
   requireActiveSubscription,
   getStudentAssignmentSubmission
 );
+
 
 // Publish assignment
 router.patch(

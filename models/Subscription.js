@@ -35,16 +35,19 @@ const subscriptionSchema = new mongoose.Schema(
       min: 0,
     },
 
+    // A subscription only exists after successful payment,
+    // so it can never start in a "pending" state.
     status: {
       type: String,
-      enum: ["pending", "active", "expired", "cancelled"],
-      default: "pending",
+      enum: ["active", "expired", "cancelled"],
+      default: "active",
+      required: true,
       index: true,
     },
 
     startsAt: {
       type: Date,
-      default: null,
+      required: true,
     },
 
     expiresAt: {
@@ -54,7 +57,8 @@ const subscriptionSchema = new mongoose.Schema(
 
     activatedAt: {
       type: Date,
-      default: null,
+      required: true,
+      default: Date.now,
     },
   },
   {
@@ -62,7 +66,7 @@ const subscriptionSchema = new mongoose.Schema(
   }
 );
 
-// One subscription per school per academic term
+// One subscription per school per academic session/term.
 subscriptionSchema.index(
   {
     school: 1,

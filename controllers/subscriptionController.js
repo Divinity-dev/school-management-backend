@@ -1,10 +1,9 @@
 import mongoose from "mongoose";
 import crypto from "crypto";
-
+import AcademicSession from "../models/AcademicSession.js";
 import Subscription from "../models/Subscription.js";
 import Payment from "../models/Payment.js";
 import Student from "../models/Student.js";
-import AcademicSession from "../models/AcademicSession.js";
 import AcademicTerm from "../models/AcademicTerm.js";
 
 import {
@@ -15,734 +14,62 @@ import {
 const PRICE_PER_STUDENT = 1000;
 
 const getSchoolId = (req) => {
-  return req.user?.school?._id || req.user?.school;
+  return (
+    req.user?.school?._id ||
+    req.user?.school ||
+    null
+  );
+};
+
+const isValidObjectId = (value) => {
+  return mongoose.Types.ObjectId.isValid(value);
+};
+
+const generatePaymentReference = (prefix) => {
+  return `${prefix}-${Date.now()}-${crypto
+    .randomBytes(6)
+    .toString("hex")
+    .toUpperCase()}`;
 };
 
 // --------------------------------------------------
-// Create a subscription
+// Get subscription pricing
 // --------------------------------------------------
-export const createSubscription = async (req, res) => {
+export const getSubscriptionPricing = async (req, res) => {
   try {
-    const schoolId = getSchoolId(req);
-
-    const {
-      academicSessionId,
-      academicTermId,
-      studentLimit,
-    } = req.body;
-
-    if (!schoolId) {
-      return res.status(400).json({
-        message: "User is not associated with a school.",
-      });
-    }
-
-    if (!academicSessionId || !academicTermId) {
-      return res.status(400).json({
-        message: "Academic session and academic term are required.",
-      });
-    }
-
-    if (!studentLimit || studentLimit < 1) {
-      return res.status(400).json({
-        message: "Student limit must be at least 1.",
-      });
-    }
-
-    if (
-      !mongoose.Types.ObjectId.isValid(academicSessionId) ||
-      !mongoose.Types.ObjectId.isValid(academicTermId)
-    ) {
-      return res.status(400).json({
-        message: "Invalid academic session or academic term ID.",
-      });
-    }
-
-    const calculatedAmount =
-      Number(studentLimit) * PRICE_PER_STUDENT;
-
-    // --------------------------------------------------
-    // Verify session belongs to this school
-    // --------------------------------------------------
-    const academicSession = await AcademicSession.findOne({
-      _id: academicSessionId,
-      school: schoolId,
-    });
-
-    if (!academicSession) {
-      return res.status(404).json({
-        message: "Academic session not found for this school.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Verify term belongs to this school and session
-    // --------------------------------------------------
-    const academicTerm = await AcademicTerm.findOne({
-      _id: academicTermId,
-      school: schoolId,
-      academicSession: academicSessionId,
-    });
-
-    if (!academicTerm) {
-      return res.status(404).json({
-        message:
-          "Academic term not found for this school and academic session.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Prevent duplicate subscription
-    // --------------------------------------------------
-    const existingSubscription = await Subscription.findOne({
-      school: schoolId,
-      academicSession: academicSessionId,
-      academicTerm: academicTermId,
-    });
-
-    if (existingSubscription) {
-      return res.status(409).json({
-        message:
-          "A subscription already exists for this academic term.",
-        subscription: existingSubscription,
-      });
-    }
-
-    // --------------------------------------------------
-    // Create pending subscription
-    // --------------------------------------------------
-    const subscription = await Subscription.create({
-      school: schoolId,
-      academicSession: academicSessionId,
-      academicTerm: academicTermId,
-      studentLimit: Number(studentLimit),
-      amount: calculatedAmount,
-      status: "pending",
-      startsAt: academicTerm.startDate,
-      expiresAt: academicTerm.endDate,
-    });
-
-    return res.status(201).json({
-      message: "Subscription created successfully.",
-      subscription,
+    return res.status(200).json({
+      message: "Subscription pricing retrieved successfully.",
       pricing: {
+        billingCycle: "termly",
         pricePerStudent: PRICE_PER_STUDENT,
-        studentLimit: Number(studentLimit),
-        totalAmount: calculatedAmount,
-      },
-    });
-  } catch (error) {
-    console.error("Create subscription error:", error);
-
-    return res.status(500).json({
-      message: "Failed to create subscription.",
-      error: error.message,
-    });
-  }
-};
-
-// --------------------------------------------------
-// Initialize subscription payment
-// --------------------------------------------------
-export const initializeSubscriptionPayment = async (req, res) => {
-  try {
-    const schoolId = getSchoolId(req);
-    const { subscriptionId } = req.body;
-
-    const userEmail = req.user?.email;
-
-    if (!schoolId) {
-      return res.status(400).json({
-        message: "User is not associated with a school.",
-      });
-    }
-
-    if (!subscriptionId) {
-      return res.status(400).json({
-        message: "Subscription ID is required.",
-      });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(subscriptionId)) {
-      return res.status(400).json({
-        message: "Invalid subscription ID.",
-      });
-    }
-
-    if (!userEmail) {
-      return res.status(400).json({
-        message: "Authenticated user email is required for payment.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Find subscription belonging to this school
-    // --------------------------------------------------
-    const subscription = await Subscription.findOne({
-      _id: subscriptionId,
-      school: schoolId,
-    });
-
-    if (!subscription) {
-      return res.status(404).json({
-        message: "Subscription not found.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Subscription must still be pending
-    // --------------------------------------------------
-    if (subscription.status !== "pending") {
-      return res.status(400).json({
-        message:
-          "Only a pending subscription can be paid for.",
-        status: subscription.status,
-      });
-    }
-
-    // --------------------------------------------------
-    // Prevent duplicate successful payment
-    // --------------------------------------------------
-    const successfulPayment = await Payment.findOne({
-      subscription: subscription._id,
-      type: "initial_subscription",
-      status: "successful",
-    });
-
-    if (successfulPayment) {
-      return res.status(409).json({
-        message: "This subscription has already been paid for.",
-        payment: successfulPayment,
-      });
-    }
-
-    // --------------------------------------------------
-    // Prevent multiple active pending payment attempts
-    // --------------------------------------------------
-    const pendingPayment = await Payment.findOne({
-      subscription: subscription._id,
-      type: "initial_subscription",
-      status: "pending",
-    });
-
-    if (pendingPayment) {
-      return res.status(409).json({
-        message:
-          "A payment is already pending for this subscription.",
-        payment: pendingPayment,
-      });
-    }
-
-    // --------------------------------------------------
-    // Generate unique application payment reference
-    // --------------------------------------------------
-    const paymentReference = `SUB-${Date.now()}-${crypto
-      .randomBytes(6)
-      .toString("hex")
-      .toUpperCase()}`;
-
-    // --------------------------------------------------
-    // Amount is stored in NAIRA in our database
-    // Paystack requires KOBO
-    // --------------------------------------------------
-    const amountInNaira = Number(subscription.amount);
-    const amountInKobo = amountInNaira * 100;
-
-    if (!Number.isFinite(amountInNaira) || amountInNaira <= 0) {
-      return res.status(400).json({
-        message: "Invalid subscription amount.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Create pending payment record
-    // --------------------------------------------------
-    const payment = await Payment.create({
-      school: schoolId,
-      subscription: subscription._id,
-      academicSession: subscription.academicSession,
-      academicTerm: subscription.academicTerm,
-      type: "initial_subscription",
-      amount: amountInNaira,
-      studentSeatsPurchased: subscription.studentLimit,
-      paymentReference,
-      provider: "paystack",
-      status: "pending",
-      metadata: {
-        subscriptionId: subscription._id.toString(),
-        studentSeats: subscription.studentLimit,
-        amountInNaira,
-      },
-    });
-
-    // --------------------------------------------------
-    // Paystack callback URL
-    // --------------------------------------------------
-    const callbackUrl = process.env.PAYSTACK_CALLBACK_URL;
-
-    if (!callbackUrl) {
-      await Payment.findByIdAndDelete(payment._id);
-
-      return res.status(500).json({
-        message: "PAYSTACK_CALLBACK_URL is not configured.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Initialize Paystack transaction
-    // --------------------------------------------------
-    const paystackTransaction = await initializeTransaction({
-      email: userEmail,
-      amount: amountInKobo,
-      reference: paymentReference,
-      callbackUrl,
-      metadata: {
-        paymentId: payment._id.toString(),
-        subscriptionId: subscription._id.toString(),
-        schoolId: schoolId.toString(),
-        academicSessionId:
-          subscription.academicSession.toString(),
-        academicTermId:
-          subscription.academicTerm.toString(),
-        type: "initial_subscription",
-      },
-    });
-
-    return res.status(200).json({
-      message: "Subscription payment initialized successfully.",
-      payment: {
-        id: payment._id,
-        reference: payment.paymentReference,
-        amount: payment.amount,
         currency: "NGN",
-        status: payment.status,
-      },
-      paystack: {
-        authorizationUrl: paystackTransaction.authorization_url,
-        accessCode: paystackTransaction.access_code,
-        reference: paystackTransaction.reference,
+        currencySymbol: "₦",
+        minimumStudentSeats: 1,
       },
     });
   } catch (error) {
     console.error(
-      "Initialize subscription payment error:",
+      "Get subscription pricing error:",
       error
     );
 
     return res.status(500).json({
-      message: "Failed to initialize subscription payment.",
-      error: error.message,
+      message: "Failed to retrieve subscription pricing.",
     });
   }
 };
 
 // --------------------------------------------------
-// Verify subscription payment
+// Initialize initial subscription payment
 // --------------------------------------------------
-export const verifySubscriptionPayment = async (req, res) => {
-  try {
-    const schoolId = getSchoolId(req);
-    const { reference } = req.params;
-
-    if (!schoolId) {
-      return res.status(400).json({
-        message: "User is not associated with a school.",
-      });
-    }
-
-    if (!reference) {
-      return res.status(400).json({
-        message: "Payment reference is required.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Find our payment record
-    // --------------------------------------------------
-    const payment = await Payment.findOne({
-      paymentReference: reference,
-      school: schoolId,
-      type: "initial_subscription",
-    });
-
-    if (!payment) {
-      return res.status(404).json({
-        message: "Payment record not found.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Idempotency
-    // If already successful, don't process again
-    // --------------------------------------------------
-    if (payment.status === "successful") {
-      const subscription = await Subscription.findOne({
-        _id: payment.subscription,
-        school: schoolId,
-      });
-
-      return res.status(200).json({
-        message: "Payment has already been verified successfully.",
-        payment,
-        subscription,
-      });
-    }
-
-    // --------------------------------------------------
-    // Verify transaction directly with Paystack
-    // --------------------------------------------------
-    const transaction = await verifyTransaction(reference);
-
-    // --------------------------------------------------
-    // Verify reference
-    // --------------------------------------------------
-    if (transaction.reference !== payment.paymentReference) {
-      payment.status = "failed";
-      await payment.save();
-
-      return res.status(400).json({
-        message: "Payment reference mismatch.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Verify transaction status
-    // --------------------------------------------------
-    if (transaction.status !== "success") {
-      payment.status = "failed";
-      await payment.save();
-
-      return res.status(400).json({
-        message: "Paystack transaction was not successful.",
-        paymentStatus: transaction.status,
-      });
-    }
-
-    // --------------------------------------------------
-    // Verify currency
-    // --------------------------------------------------
-    if (transaction.currency !== "NGN") {
-      payment.status = "failed";
-      await payment.save();
-
-      return res.status(400).json({
-        message: "Invalid payment currency.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Verify amount
-    //
-    // Our database stores naira.
-    // Paystack returns kobo.
-    // --------------------------------------------------
-    const expectedAmountInKobo =
-      Number(payment.amount) * 100;
-
-    if (Number(transaction.amount) !== expectedAmountInKobo) {
-      payment.status = "failed";
-      await payment.save();
-
-      return res.status(400).json({
-        message: "Payment amount mismatch.",
-        expectedAmount: expectedAmountInKobo,
-        receivedAmount: transaction.amount,
-      });
-    }
-
-    // --------------------------------------------------
-    // Find subscription
-    // --------------------------------------------------
-    const subscription = await Subscription.findOne({
-      _id: payment.subscription,
-      school: schoolId,
-    });
-
-    if (!subscription) {
-      return res.status(404).json({
-        message:
-          "Subscription associated with this payment was not found.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Activate subscription
-    // --------------------------------------------------
-    subscription.status = "active";
-    subscription.activatedAt = new Date();
-
-    await subscription.save();
-
-    // --------------------------------------------------
-    // Update payment
-    // --------------------------------------------------
-    payment.status = "successful";
-    payment.paidAt = new Date();
-    payment.paystackTransactionId =
-      transaction.id?.toString() || null;
-
-    payment.metadata = {
-      ...(payment.metadata || {}),
-      paystackStatus: transaction.status,
-      paystackCurrency: transaction.currency,
-      paystackAmount: transaction.amount,
-      channel: transaction.channel,
-      paidAt: transaction.paid_at || null,
-    };
-
-    await payment.save();
-
-    return res.status(200).json({
-      message: "Subscription payment verified successfully.",
-      payment,
-      subscription,
-    });
-  } catch (error) {
-    console.error(
-      "Verify subscription payment error:",
-      error
-    );
-
-    return res.status(500).json({
-      message: "Failed to verify subscription payment.",
-      error: error.message,
-    });
-  }
-};
-
+//
+// IMPORTANT:
+// No Subscription document is created here.
+//
+// The Subscription is created only after Paystack
+// confirms successful payment.
 // --------------------------------------------------
-// Get subscription for a specific term
-// --------------------------------------------------
-export const getTermSubscription = async (req, res) => {
-  try {
-    const schoolId = getSchoolId(req);
-
-    const { academicSessionId, academicTermId } = req.query;
-
-    if (!schoolId) {
-      return res.status(400).json({
-        message: "User is not associated with a school.",
-      });
-    }
-
-    if (!academicSessionId || !academicTermId) {
-      return res.status(400).json({
-        message:
-          "Academic session ID and academic term ID are required.",
-      });
-    }
-
-    const subscription = await Subscription.findOne({
-      school: schoolId,
-      academicSession: academicSessionId,
-      academicTerm: academicTermId,
-    })
-      .populate("academicSession", "name startDate endDate")
-      .populate(
-        "academicTerm",
-        "name startDate endDate isCurrent isActive"
-      );
-
-    if (!subscription) {
-      return res.status(404).json({
-        message: "No subscription found for this academic term.",
-      });
-    }
-
-    const activeStudentCount = await Student.countDocuments({
-      school: schoolId,
-      isActive: true,
-    });
-
-    const availableSeats = Math.max(
-      subscription.studentLimit - activeStudentCount,
-      0
-    );
-
-    return res.status(200).json({
-      message: "Subscription retrieved successfully.",
-      subscription,
-      usage: {
-        studentLimit: subscription.studentLimit,
-        activeStudents: activeStudentCount,
-        availableSeats,
-      },
-    });
-  } catch (error) {
-    console.error("Get term subscription error:", error);
-
-    return res.status(500).json({
-      message: "Failed to retrieve subscription.",
-      error: error.message,
-    });
-  }
-};
-
-// --------------------------------------------------
-// Get current term subscription
-// --------------------------------------------------
-export const getCurrentSubscription = async (req, res) => {
-  try {
-    const schoolId = getSchoolId(req);
-
-    if (!schoolId) {
-      return res.status(400).json({
-        message: "User is not associated with a school.",
-      });
-    }
-
-    const currentTerm = await AcademicTerm.findOne({
-      school: schoolId,
-      isCurrent: true,
-      isActive: true,
-    });
-
-    if (!currentTerm) {
-      return res.status(404).json({
-        message: "No current academic term found.",
-      });
-    }
-
-    const subscription = await Subscription.findOne({
-      school: schoolId,
-      academicSession: currentTerm.academicSession,
-      academicTerm: currentTerm._id,
-    })
-      .populate("academicSession", "name startDate endDate")
-      .populate(
-        "academicTerm",
-        "name startDate endDate isCurrent isActive"
-      );
-
-    const activeStudentCount = await Student.countDocuments({
-      school: schoolId,
-      isActive: true,
-    });
-
-    if (!subscription) {
-      return res.status(200).json({
-        message: "No active subscription found for the current term.",
-        subscription: null,
-        currentTerm,
-        usage: {
-          studentLimit: 0,
-          activeStudents: activeStudentCount,
-          availableSeats: 0,
-        },
-        isSubscribed: false,
-      });
-    }
-
-    const isSubscriptionActive =
-      subscription.status === "active" &&
-      (!subscription.expiresAt ||
-        new Date(subscription.expiresAt) >= new Date());
-
-    const availableSeats = Math.max(
-      subscription.studentLimit - activeStudentCount,
-      0
-    );
-
-    return res.status(200).json({
-      message: "Current subscription retrieved successfully.",
-      subscription,
-      currentTerm,
-      usage: {
-        studentLimit: subscription.studentLimit,
-        activeStudents: activeStudentCount,
-        availableSeats,
-      },
-      isSubscribed: isSubscriptionActive,
-    });
-  } catch (error) {
-    console.error("Get current subscription error:", error);
-
-    return res.status(500).json({
-      message: "Failed to retrieve current subscription.",
-      error: error.message,
-    });
-  }
-};
-
-// --------------------------------------------------
-// Check subscription status
-// --------------------------------------------------
-export const checkSubscriptionStatus = async (req, res) => {
-  try {
-    const schoolId = getSchoolId(req);
-
-    const { academicSessionId, academicTermId } = req.query;
-
-    if (!schoolId) {
-      return res.status(400).json({
-        message: "User is not associated with a school.",
-      });
-    }
-
-    if (!academicSessionId || !academicTermId) {
-      return res.status(400).json({
-        message:
-          "Academic session ID and academic term ID are required.",
-      });
-    }
-
-    const subscription = await Subscription.findOne({
-      school: schoolId,
-      academicSession: academicSessionId,
-      academicTerm: academicTermId,
-    });
-
-    if (!subscription) {
-      return res.status(200).json({
-        isSubscribed: false,
-        status: "not_subscribed",
-        studentLimit: 0,
-        activeStudents: await Student.countDocuments({
-          school: schoolId,
-          isActive: true,
-        }),
-        availableSeats: 0,
-      });
-    }
-
-    const activeStudentCount = await Student.countDocuments({
-      school: schoolId,
-      isActive: true,
-    });
-
-    const isActive =
-      subscription.status === "active" &&
-      (!subscription.expiresAt ||
-        new Date(subscription.expiresAt) >= new Date());
-
-    const availableSeats = Math.max(
-      subscription.studentLimit - activeStudentCount,
-      0
-    );
-
-    return res.status(200).json({
-      isSubscribed: isActive,
-      status: subscription.status,
-      subscriptionId: subscription._id,
-      studentLimit: subscription.studentLimit,
-      activeStudents: activeStudentCount,
-      availableSeats,
-      expiresAt: subscription.expiresAt,
-    });
-  } catch (error) {
-    console.error("Check subscription status error:", error);
-
-    return res.status(500).json({
-      message: "Failed to check subscription status.",
-      error: error.message,
-    });
-  }
-};
-
-// --------------------------------------------------
-// Initialize additional student seats payment
-// --------------------------------------------------
-export const initializeAdditionalSeatsPayment = async (
+export const initializeSubscriptionPayment = async (
   req,
   res
 ) => {
@@ -751,8 +78,9 @@ export const initializeAdditionalSeatsPayment = async (
     const userEmail = req.user?.email;
 
     const {
-      subscriptionId,
-      additionalSeats,
+      academicSessionId,
+      academicTermId,
+      studentLimit,
     } = req.body;
 
     if (!schoolId) {
@@ -768,180 +96,296 @@ export const initializeAdditionalSeatsPayment = async (
       });
     }
 
-    if (!subscriptionId) {
+    if (!academicSessionId || !academicTermId) {
       return res.status(400).json({
-        message: "Subscription ID is required.",
-      });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(subscriptionId)) {
-      return res.status(400).json({
-        message: "Invalid subscription ID.",
+        message:
+          "Academic session and academic term are required.",
       });
     }
 
     if (
-      !Number.isInteger(additionalSeats) ||
-      additionalSeats < 1
+      !isValidObjectId(academicSessionId) ||
+      !isValidObjectId(academicTermId)
     ) {
       return res.status(400).json({
         message:
-          "Additional seats must be a positive whole number.",
+          "Invalid academic session or academic term ID.",
       });
     }
 
-    // --------------------------------------------------
-    // Find active subscription belonging to this school
-    // --------------------------------------------------
-    const subscription = await Subscription.findOne({
-      _id: subscriptionId,
-      school: schoolId,
-    });
+    const seats = Number(studentLimit);
 
-    if (!subscription) {
-      return res.status(404).json({
-        message: "Subscription not found.",
-      });
-    }
-
-    if (subscription.status !== "active") {
+    if (
+      !Number.isInteger(seats) ||
+      seats < 1
+    ) {
       return res.status(400).json({
         message:
-          "Only an active subscription can have additional seats.",
-        status: subscription.status,
+          "Student limit must be a positive whole number.",
       });
     }
 
     // --------------------------------------------------
-    // Calculate amount on the backend
-    // Never trust amount supplied by frontend
+    // Verify academic session
     // --------------------------------------------------
-    const amountInNaira =
-      Number(additionalSeats) * PRICE_PER_STUDENT;
+    const academicSession =
+      await AcademicSession.findOne({
+        _id: academicSessionId,
+        school: schoolId,
+      });
 
-    const amountInKobo = amountInNaira * 100;
+    if (!academicSession) {
+      return res.status(404).json({
+        message:
+          "Academic session not found for this school.",
+      });
+    }
 
     // --------------------------------------------------
-    // Prevent duplicate pending additional-seat payment
+    // Verify academic term
     // --------------------------------------------------
-    const pendingPayment = await Payment.findOne({
-      subscription: subscription._id,
-      type: "additional_seats",
-      status: "pending",
-    });
+    const academicTerm =
+      await AcademicTerm.findOne({
+        _id: academicTermId,
+        school: schoolId,
+        academicSession: academicSessionId,
+      });
 
-    if (pendingPayment) {
+    if (!academicTerm) {
+      return res.status(404).json({
+        message:
+          "Academic term not found for this school and academic session.",
+      });
+    }
+
+    // --------------------------------------------------
+    // Prevent duplicate active subscription
+    // --------------------------------------------------
+    const existingSubscription =
+      await Subscription.findOne({
+        school: schoolId,
+        academicSession: academicSessionId,
+        academicTerm: academicTermId,
+      });
+
+    if (existingSubscription) {
       return res.status(409).json({
         message:
-          "An additional-seat payment is already pending for this subscription.",
-        payment: pendingPayment,
+          "A subscription already exists for this academic term.",
+        subscription: existingSubscription,
       });
     }
 
     // --------------------------------------------------
-    // Generate payment reference
+    // Prevent multiple pending initial payments
     // --------------------------------------------------
-    const paymentReference = `SEAT-${Date.now()}-${crypto
-      .randomBytes(6)
-      .toString("hex")
-      .toUpperCase()}`;
+    const existingPendingPayment =
+      await Payment.findOne({
+        school: schoolId,
+        academicSession: academicSessionId,
+        academicTerm: academicTermId,
+        type: "initial_subscription",
+        provider: "paystack",
+        status: "pending",
+      });
+
+    if (existingPendingPayment) {
+      return res.status(409).json({
+        message:
+          "A subscription payment is already pending for this academic term.",
+        payment: {
+          id: existingPendingPayment._id,
+          reference:
+            existingPendingPayment.paymentReference,
+          amount: existingPendingPayment.amount,
+          studentSeatsPurchased:
+            existingPendingPayment.studentSeatsPurchased,
+          status: existingPendingPayment.status,
+        },
+      });
+    }
 
     // --------------------------------------------------
-    // Create pending payment record
+    // Calculate amount on backend
     // --------------------------------------------------
-    const payment = await Payment.create({
-      school: schoolId,
-      subscription: subscription._id,
-      academicSession: subscription.academicSession,
-      academicTerm: subscription.academicTerm,
-      type: "additional_seats",
-      amount: amountInNaira,
-      studentSeatsPurchased: Number(additionalSeats),
-      paymentReference,
-      provider: "paystack",
-      status: "pending",
-      metadata: {
-        subscriptionId: subscription._id.toString(),
-        additionalSeats: Number(additionalSeats),
-        previousStudentLimit: subscription.studentLimit,
-        pricePerStudent: PRICE_PER_STUDENT,
-        amountInNaira,
-      },
-    });
+    const amountInNaira =
+      seats * PRICE_PER_STUDENT;
+
+    const amountInKobo =
+      Math.round(amountInNaira * 100);
+
+    const paymentReference =
+      generatePaymentReference("SUB");
+
+    // --------------------------------------------------
+    // Create pending Payment
+    // --------------------------------------------------
+    const payment =
+      await Payment.create({
+        school: schoolId,
+
+        subscription: null,
+
+        academicSession:
+          academicSessionId,
+
+        academicTerm:
+          academicTermId,
+
+        type: "initial_subscription",
+
+        amount: amountInNaira,
+
+        studentSeatsPurchased: seats,
+
+        paymentReference,
+
+        provider: "paystack",
+
+        paymentMethod: "paystack",
+
+        status: "pending",
+
+        metadata: {
+          academicSessionId:
+            academicSessionId.toString(),
+
+          academicTermId:
+            academicTermId.toString(),
+
+          studentLimit: seats,
+
+          pricePerStudent:
+            PRICE_PER_STUDENT,
+
+          amountInNaira,
+        },
+      });
 
     // --------------------------------------------------
     // Paystack callback URL
     // --------------------------------------------------
-    const callbackUrl = process.env.PAYSTACK_CALLBACK_URL;
+    const callbackUrl =
+      process.env.PAYSTACK_CALLBACK_URL;
 
     if (!callbackUrl) {
-      await Payment.findByIdAndDelete(payment._id);
+      await Payment.findByIdAndDelete(
+        payment._id
+      );
 
       return res.status(500).json({
-        message: "PAYSTACK_CALLBACK_URL is not configured.",
+        message:
+          "PAYSTACK_CALLBACK_URL is not configured.",
       });
     }
 
     // --------------------------------------------------
-    // Initialize Paystack transaction
+    // Initialize Paystack
     // --------------------------------------------------
-    const paystackTransaction = await initializeTransaction({
-      email: userEmail,
-      amount: amountInKobo,
-      reference: paymentReference,
-      callbackUrl,
-      metadata: {
-        paymentId: payment._id.toString(),
-        subscriptionId: subscription._id.toString(),
-        schoolId: schoolId.toString(),
-        academicSessionId:
-          subscription.academicSession.toString(),
-        academicTermId:
-          subscription.academicTerm.toString(),
-        type: "additional_seats",
-        additionalSeats: Number(additionalSeats),
-      },
-    });
+    try {
+      const paystackTransaction =
+        await initializeTransaction({
+          email: userEmail,
 
-    return res.status(200).json({
-      message:
-        "Additional-seat payment initialized successfully.",
-      payment: {
-        id: payment._id,
-        reference: payment.paymentReference,
-        amount: payment.amount,
-        currency: "NGN",
-        studentSeatsPurchased:
-          payment.studentSeatsPurchased,
-        status: payment.status,
-      },
-      paystack: {
-        authorizationUrl:
-          paystackTransaction.authorization_url,
-        accessCode:
-          paystackTransaction.access_code,
-        reference:
-          paystackTransaction.reference,
-      },
-    });
+          amount: amountInKobo,
+
+          reference:
+            paymentReference,
+
+          callbackUrl,
+
+          metadata: {
+            paymentId:
+              payment._id.toString(),
+
+            schoolId:
+              schoolId.toString(),
+
+            academicSessionId:
+              academicSessionId.toString(),
+
+            academicTermId:
+              academicTermId.toString(),
+
+            type:
+              "initial_subscription",
+
+            studentLimit: seats,
+          },
+        });
+
+      return res.status(200).json({
+        message:
+          "Subscription payment initialized successfully.",
+
+        payment: {
+          id: payment._id,
+
+          reference:
+            payment.paymentReference,
+
+          amount:
+            payment.amount,
+
+          currency: "NGN",
+
+          studentSeatsPurchased:
+            payment.studentSeatsPurchased,
+
+          status:
+            payment.status,
+        },
+
+        paystack: {
+          authorizationUrl:
+            paystackTransaction.authorization_url,
+
+          accessCode:
+            paystackTransaction.access_code,
+
+          reference:
+            paystackTransaction.reference,
+        },
+      });
+    } catch (error) {
+      payment.status = "failed";
+
+      payment.metadata = {
+        ...(payment.metadata || {}),
+
+        failureReason:
+          "Paystack transaction initialization failed.",
+      };
+
+      await payment.save();
+
+      throw error;
+    }
   } catch (error) {
     console.error(
-      "Initialize additional seats payment error:",
+      "Initialize subscription payment error:",
       error
     );
 
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        message:
+          "A subscription payment already exists for this academic term.",
+      });
+    }
+
     return res.status(500).json({
       message:
-        "Failed to initialize additional-seat payment.",
+        "Failed to initialize subscription payment.",
       error: error.message,
     });
   }
 };
 
 // --------------------------------------------------
-// Verify additional student seats payment
+// Verify initial subscription payment
 // --------------------------------------------------
-export const verifyAdditionalSeatsPayment = async (
+export const verifySubscriptionPayment = async (
   req,
   res
 ) => {
@@ -951,191 +395,1050 @@ export const verifyAdditionalSeatsPayment = async (
 
     if (!schoolId) {
       return res.status(400).json({
-        message: "User is not associated with a school.",
+        message:
+          "User is not associated with a school.",
       });
     }
 
-    if (!reference) {
+    if (!reference?.trim()) {
       return res.status(400).json({
-        message: "Payment reference is required.",
+        message:
+          "Payment reference is required.",
       });
     }
 
-    // --------------------------------------------------
-    // Find our payment record
-    // --------------------------------------------------
-    const payment = await Payment.findOne({
-      paymentReference: reference,
-      school: schoolId,
-      type: "additional_seats",
-    });
+    const payment =
+      await Payment.findOne({
+        paymentReference:
+          reference.trim(),
+
+        school:
+          schoolId,
+
+        type:
+          "initial_subscription",
+      });
 
     if (!payment) {
       return res.status(404).json({
-        message: "Payment record not found.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Find subscription
-    // --------------------------------------------------
-    const subscription = await Subscription.findOne({
-      _id: payment.subscription,
-      school: schoolId,
-    });
-
-    if (!subscription) {
-      return res.status(404).json({
         message:
-          "Subscription associated with this payment was not found.",
+          "Subscription payment not found.",
       });
     }
 
     // --------------------------------------------------
     // Idempotency
-    // Prevent seats from being added twice
     // --------------------------------------------------
-    if (payment.status === "successful") {
+    if (
+      payment.status ===
+      "successful"
+    ) {
+      const subscription =
+        payment.subscription
+          ? await Subscription.findOne({
+              _id:
+                payment.subscription,
+
+              school:
+                schoolId,
+            })
+          : null;
+
       return res.status(200).json({
         message:
-          "Additional-seat payment has already been verified successfully.",
+          "Subscription payment has already been verified successfully.",
+
         payment,
+
         subscription,
       });
     }
 
-    // --------------------------------------------------
-    // Only pending payments can be verified
-    // --------------------------------------------------
-    if (payment.status !== "pending") {
+    if (
+      payment.status !==
+      "pending"
+    ) {
       return res.status(400).json({
-        message: `This payment is ${payment.status}.`,
+        message:
+          `This payment is ${payment.status}.`,
+
         payment,
       });
     }
 
     // --------------------------------------------------
-    // Verify transaction directly with Paystack
+    // Verify transaction with Paystack
     // --------------------------------------------------
-    const transaction = await verifyTransaction(reference);
+    const transaction =
+      await verifyTransaction(
+        reference.trim()
+      );
 
     // --------------------------------------------------
-    // Verify reference
+    // Keep abandoned checkout pending
     // --------------------------------------------------
-    if (transaction.reference !== payment.paymentReference) {
-      payment.status = "failed";
-      await payment.save();
-
-      return res.status(400).json({
-        message: "Payment reference mismatch.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Verify transaction status
-    // --------------------------------------------------
-    if (transaction.status !== "success") {
-  // An abandoned checkout is not a failed payment.
-  // Keep the payment pending so the customer can retry.
-  if (transaction.status === "abandoned") {
-    return res.status(400).json({
-      message:
-        "Payment was abandoned. No seats were added.",
-      paymentStatus: transaction.status,
-      payment,
-    });
-  }
-
-  payment.status = "failed";
-  await payment.save();
-
-  return res.status(400).json({
-    message:
-      "Paystack transaction was not successful.",
-    paymentStatus: transaction.status,
-  });
-}
-
-    // --------------------------------------------------
-    // Verify currency
-    // --------------------------------------------------
-    if (transaction.currency !== "NGN") {
-      payment.status = "failed";
-      await payment.save();
-
-      return res.status(400).json({
-        message: "Invalid payment currency.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Verify amount
-    // --------------------------------------------------
-    const expectedAmountInKobo =
-      Number(payment.amount) * 100;
-
     if (
-      Number(transaction.amount) !==
-      Number(expectedAmountInKobo)
+      transaction.status ===
+      "abandoned"
     ) {
-      payment.status = "failed";
-      await payment.save();
-
       return res.status(400).json({
-        message: "Payment amount mismatch.",
-        expectedAmount: expectedAmountInKobo,
-        receivedAmount: transaction.amount,
+        message:
+          "Payment was abandoned. No subscription was created.",
+
+        paymentStatus:
+          transaction.status,
+
+        payment,
       });
     }
 
     // --------------------------------------------------
-    // Add the seats ONLY after successful verification
+    // Process successful transaction
     // --------------------------------------------------
-    subscription.studentLimit +=
-      Number(payment.studentSeatsPurchased);
+    const {
+      processSuccessfulSubscriptionPayment,
+    } = await import(
+      "./paymentController.js"
+    );
 
-    subscription.amount += Number(payment.amount);
+    const result =
+      await processSuccessfulSubscriptionPayment({
+        paymentId:
+          payment._id,
 
-    await subscription.save();
-
-    // --------------------------------------------------
-    // Mark payment successful
-    // --------------------------------------------------
-    payment.status = "successful";
-    payment.paidAt = new Date();
-    payment.paystackTransactionId =
-      transaction.id?.toString() || null;
-
-    payment.metadata = {
-      ...(payment.metadata || {}),
-      paystackStatus: transaction.status,
-      paystackCurrency: transaction.currency,
-      paystackAmount: transaction.amount,
-      channel: transaction.channel,
-      paidAt: transaction.paid_at || null,
-      paystackTransactionId:
-        transaction.id?.toString() || null,
-    };
-
-    await payment.save();
+        transaction,
+      });
 
     return res.status(200).json({
       message:
-        "Additional-seat payment verified successfully and seats added.",
-      payment,
-      subscription,
+        result.alreadyProcessed
+          ? "Subscription payment has already been processed successfully."
+          : "Subscription payment verified successfully.",
+
+      payment:
+        result.payment,
+
+      subscription:
+        result.subscription,
     });
   } catch (error) {
     console.error(
-      "Verify additional seats payment error:",
+      "Verify subscription payment error:",
+      error
+    );
+
+    switch (error.message) {
+      case "PAYMENT_REFERENCE_MISMATCH":
+        return res.status(400).json({
+          message:
+            "Payment reference mismatch.",
+        });
+
+      case "PAYMENT_NOT_SUCCESSFUL":
+        return res.status(400).json({
+          message:
+            "Paystack transaction was not successful.",
+        });
+
+      case "PAYMENT_AMOUNT_MISMATCH":
+        return res.status(400).json({
+          message:
+            "Payment amount does not match the expected amount.",
+        });
+
+      case "INVALID_STUDENT_SEAT_QUANTITY":
+        return res.status(400).json({
+          message:
+            "Invalid student seat quantity.",
+        });
+
+      case "ACADEMIC_TERM_NOT_FOUND":
+        return res.status(404).json({
+          message:
+            "Academic term associated with the payment was not found.",
+        });
+
+      default:
+        return res.status(500).json({
+          message:
+            "Failed to verify subscription payment.",
+          error: error.message,
+        });
+    }
+  }
+};
+
+// --------------------------------------------------
+// Get subscription for a specific term
+// --------------------------------------------------
+export const getTermSubscription = async (
+  req,
+  res
+) => {
+  try {
+    const schoolId = getSchoolId(req);
+
+    const {
+      academicSessionId,
+      academicTermId,
+    } = req.query;
+
+    if (!schoolId) {
+      return res.status(400).json({
+        message:
+          "User is not associated with a school.",
+      });
+    }
+
+    if (
+      !academicSessionId ||
+      !academicTermId
+    ) {
+      return res.status(400).json({
+        message:
+          "Academic session ID and academic term ID are required.",
+      });
+    }
+
+    if (
+      !isValidObjectId(
+        academicSessionId
+      ) ||
+      !isValidObjectId(
+        academicTermId
+      )
+    ) {
+      return res.status(400).json({
+        message:
+          "Invalid academic session or academic term ID.",
+      });
+    }
+
+    const subscription =
+      await Subscription.findOne({
+        school: schoolId,
+
+        academicSession:
+          academicSessionId,
+
+        academicTerm:
+          academicTermId,
+      })
+        .populate(
+          "academicSession",
+          "name startDate endDate"
+        )
+        .populate(
+          "academicTerm",
+          "name startDate endDate startsAt endsAt isCurrent isActive"
+        );
+
+    const activeStudentCount =
+      await Student.countDocuments({
+        school: schoolId,
+        isActive: true,
+      });
+
+    if (!subscription) {
+      return res.status(200).json({
+        message:
+          "No subscription found for this academic term.",
+
+        subscription: null,
+
+        usage: {
+          studentLimit: 0,
+          activeStudents:
+            activeStudentCount,
+          availableSeats: 0,
+        },
+
+        isSubscribed: false,
+      });
+    }
+
+    const isSubscriptionActive =
+      subscription.status === "active" &&
+      (
+        !subscription.expiresAt ||
+        new Date(
+          subscription.expiresAt
+        ) >= new Date()
+      );
+
+    const availableSeats =
+      Math.max(
+        subscription.studentLimit -
+          activeStudentCount,
+        0
+      );
+
+    return res.status(200).json({
+      message:
+        "Subscription retrieved successfully.",
+
+      subscription,
+
+      usage: {
+        studentLimit:
+          subscription.studentLimit,
+
+        activeStudents:
+          activeStudentCount,
+
+        availableSeats,
+      },
+
+      isSubscribed:
+        isSubscriptionActive,
+    });
+  } catch (error) {
+    console.error(
+      "Get term subscription error:",
       error
     );
 
     return res.status(500).json({
       message:
-        "Failed to verify additional-seat payment.",
+        "Failed to retrieve subscription.",
       error: error.message,
     });
   }
 };
+
+// --------------------------------------------------
+// Get current term subscription
+// --------------------------------------------------
+export const getCurrentSubscription = async (
+  req,
+  res
+) => {
+  try {
+    const schoolId = getSchoolId(req);
+
+    if (!schoolId) {
+      return res.status(400).json({
+        message:
+          "User is not associated with a school.",
+      });
+    }
+
+    const currentTerm =
+      await AcademicTerm.findOne({
+        school: schoolId,
+        isCurrent: true,
+        isActive: true,
+      });
+
+    if (!currentTerm) {
+      return res.status(404).json({
+        message:
+          "No current academic term found.",
+      });
+    }
+
+    const subscription =
+      await Subscription.findOne({
+        school: schoolId,
+
+        academicSession:
+          currentTerm.academicSession,
+
+        academicTerm:
+          currentTerm._id,
+      })
+        .populate(
+          "academicSession",
+          "name startDate endDate"
+        )
+        .populate(
+          "academicTerm",
+          "name startDate endDate startsAt endsAt isCurrent isActive"
+        );
+
+    const activeStudentCount =
+      await Student.countDocuments({
+        school: schoolId,
+        isActive: true,
+      });
+
+    if (!subscription) {
+      return res.status(200).json({
+        message:
+          "No subscription found for the current term.",
+
+        subscription: null,
+
+        currentTerm,
+
+        usage: {
+          studentLimit: 0,
+          activeStudents:
+            activeStudentCount,
+          availableSeats: 0,
+        },
+
+        isSubscribed: false,
+      });
+    }
+
+    const isSubscriptionActive =
+      subscription.status === "active" &&
+      (
+        !subscription.expiresAt ||
+        new Date(
+          subscription.expiresAt
+        ) >= new Date()
+      );
+
+    const availableSeats =
+      Math.max(
+        subscription.studentLimit -
+          activeStudentCount,
+        0
+      );
+
+    return res.status(200).json({
+      message:
+        "Current subscription retrieved successfully.",
+
+      subscription,
+
+      currentTerm,
+
+      usage: {
+        studentLimit:
+          subscription.studentLimit,
+
+        activeStudents:
+          activeStudentCount,
+
+        availableSeats,
+      },
+
+      isSubscribed:
+        isSubscriptionActive,
+    });
+  } catch (error) {
+    console.error(
+      "Get current subscription error:",
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        "Failed to retrieve current subscription.",
+      error: error.message,
+    });
+  }
+};
+
+// --------------------------------------------------
+// Check subscription status
+// --------------------------------------------------
+export const checkSubscriptionStatus = async (
+  req,
+  res
+) => {
+  try {
+    const schoolId = getSchoolId(req);
+
+    const {
+      academicSessionId,
+      academicTermId,
+    } = req.query;
+
+    if (!schoolId) {
+      return res.status(400).json({
+        message:
+          "User is not associated with a school.",
+      });
+    }
+
+    if (
+      !academicSessionId ||
+      !academicTermId
+    ) {
+      return res.status(400).json({
+        message:
+          "Academic session ID and academic term ID are required.",
+      });
+    }
+
+    const activeStudentCount =
+      await Student.countDocuments({
+        school: schoolId,
+        isActive: true,
+      });
+
+    const subscription =
+      await Subscription.findOne({
+        school: schoolId,
+
+        academicSession:
+          academicSessionId,
+
+        academicTerm:
+          academicTermId,
+      });
+
+    if (!subscription) {
+      return res.status(200).json({
+        isSubscribed: false,
+
+        status: "not_subscribed",
+
+        subscriptionId: null,
+
+        studentLimit: 0,
+
+        activeStudents:
+          activeStudentCount,
+
+        availableSeats: 0,
+
+        expiresAt: null,
+      });
+    }
+
+    const isActive =
+      subscription.status === "active" &&
+      (
+        !subscription.expiresAt ||
+        new Date(
+          subscription.expiresAt
+        ) >= new Date()
+      );
+
+    const availableSeats =
+      Math.max(
+        subscription.studentLimit -
+          activeStudentCount,
+        0
+      );
+
+    return res.status(200).json({
+      isSubscribed: isActive,
+
+      status:
+        subscription.status,
+
+      subscriptionId:
+        subscription._id,
+
+      studentLimit:
+        subscription.studentLimit,
+
+      activeStudents:
+        activeStudentCount,
+
+      availableSeats,
+
+      expiresAt:
+        subscription.expiresAt,
+    });
+  } catch (error) {
+    console.error(
+      "Check subscription status error:",
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        "Failed to check subscription status.",
+      error: error.message,
+    });
+  }
+};
+
+// --------------------------------------------------
+// Initialize additional student seats payment
+// --------------------------------------------------
+export const initializeAdditionalSeatsPayment =
+  async (req, res) => {
+    try {
+      const schoolId = getSchoolId(req);
+      const userEmail = req.user?.email;
+
+      const {
+        subscriptionId,
+        additionalSeats,
+      } = req.body;
+
+      if (!schoolId) {
+        return res.status(400).json({
+          message:
+            "User is not associated with a school.",
+        });
+      }
+
+      if (!userEmail) {
+        return res.status(400).json({
+          message:
+            "Authenticated user email is required for payment.",
+        });
+      }
+
+      if (!subscriptionId) {
+        return res.status(400).json({
+          message:
+            "Subscription ID is required.",
+        });
+      }
+
+      if (
+        !isValidObjectId(
+          subscriptionId
+        )
+      ) {
+        return res.status(400).json({
+          message:
+            "Invalid subscription ID.",
+        });
+      }
+
+      const seats =
+        Number(additionalSeats);
+
+      if (
+        !Number.isInteger(seats) ||
+        seats < 1
+      ) {
+        return res.status(400).json({
+          message:
+            "Additional seats must be a positive whole number.",
+        });
+      }
+
+      const subscription =
+        await Subscription.findOne({
+          _id: subscriptionId,
+          school: schoolId,
+          status: "active",
+        });
+
+      if (!subscription) {
+        return res.status(404).json({
+          message:
+            "Active subscription not found.",
+        });
+      }
+
+      // --------------------------------------------------
+      // Prevent expired subscription from receiving seats
+      // --------------------------------------------------
+      if (
+        subscription.expiresAt &&
+        new Date(
+          subscription.expiresAt
+        ) < new Date()
+      ) {
+        return res.status(400).json({
+          message:
+            "This subscription has expired.",
+        });
+      }
+
+      // --------------------------------------------------
+      // Prevent multiple pending seat payments
+      // --------------------------------------------------
+      const pendingPayment =
+        await Payment.findOne({
+          school: schoolId,
+
+          subscription:
+            subscription._id,
+
+          type:
+            "additional_seats",
+
+          provider:
+            "paystack",
+
+          status:
+            "pending",
+        });
+
+      if (pendingPayment) {
+        return res.status(409).json({
+          message:
+            "An additional-seat payment is already pending for this subscription.",
+
+          payment: {
+            id:
+              pendingPayment._id,
+
+            reference:
+              pendingPayment.paymentReference,
+
+            amount:
+              pendingPayment.amount,
+
+            studentSeatsPurchased:
+              pendingPayment.studentSeatsPurchased,
+
+            status:
+              pendingPayment.status,
+          },
+        });
+      }
+
+      const amountInNaira =
+        seats * PRICE_PER_STUDENT;
+
+      const amountInKobo =
+        Math.round(
+          amountInNaira * 100
+        );
+
+      const paymentReference =
+        generatePaymentReference(
+          "SEAT"
+        );
+
+      const payment =
+        await Payment.create({
+          school:
+            schoolId,
+
+          subscription:
+            subscription._id,
+
+          academicSession:
+            subscription.academicSession,
+
+          academicTerm:
+            subscription.academicTerm,
+
+          type:
+            "additional_seats",
+
+          amount:
+            amountInNaira,
+
+          studentSeatsPurchased:
+            seats,
+
+          paymentReference,
+
+          provider:
+            "paystack",
+
+          paymentMethod:
+            "paystack",
+
+          status:
+            "pending",
+
+          metadata: {
+            subscriptionId:
+              subscription._id.toString(),
+
+            additionalSeats:
+              seats,
+
+            previousStudentLimit:
+              subscription.studentLimit,
+
+            pricePerStudent:
+              PRICE_PER_STUDENT,
+
+            amountInNaira,
+          },
+        });
+
+      const callbackUrl =
+        process.env.PAYSTACK_CALLBACK_URL;
+
+      if (!callbackUrl) {
+        await Payment.findByIdAndDelete(
+          payment._id
+        );
+
+        return res.status(500).json({
+          message:
+            "PAYSTACK_CALLBACK_URL is not configured.",
+        });
+      }
+
+      try {
+        const paystackTransaction =
+          await initializeTransaction({
+            email:
+              userEmail,
+
+            amount:
+              amountInKobo,
+
+            reference:
+              paymentReference,
+
+            callbackUrl,
+
+            metadata: {
+              paymentId:
+                payment._id.toString(),
+
+              subscriptionId:
+                subscription._id.toString(),
+
+              schoolId:
+                schoolId.toString(),
+
+              academicSessionId:
+                subscription.academicSession.toString(),
+
+              academicTermId:
+                subscription.academicTerm.toString(),
+
+              type:
+                "additional_seats",
+
+              additionalSeats:
+                seats,
+            },
+          });
+
+        return res.status(200).json({
+          message:
+            "Additional-seat payment initialized successfully.",
+
+          payment: {
+            id:
+              payment._id,
+
+            reference:
+              payment.paymentReference,
+
+            amount:
+              payment.amount,
+
+            currency:
+              "NGN",
+
+            studentSeatsPurchased:
+              payment.studentSeatsPurchased,
+
+            status:
+              payment.status,
+          },
+
+          paystack: {
+            authorizationUrl:
+              paystackTransaction.authorization_url,
+
+            accessCode:
+              paystackTransaction.access_code,
+
+            reference:
+              paystackTransaction.reference,
+          },
+        });
+      } catch (error) {
+        payment.status =
+          "failed";
+
+        payment.metadata = {
+          ...(payment.metadata || {}),
+
+          failureReason:
+            "Paystack transaction initialization failed.",
+        };
+
+        await payment.save();
+
+        throw error;
+      }
+    } catch (error) {
+      console.error(
+        "Initialize additional seats payment error:",
+        error
+      );
+
+      if (error?.code === 11000) {
+        return res.status(409).json({
+          message:
+            "An additional-seat payment already exists for this subscription.",
+        });
+      }
+
+      return res.status(500).json({
+        message:
+          "Failed to initialize additional-seat payment.",
+        error: error.message,
+      });
+    }
+  };
+
+// --------------------------------------------------
+// Verify additional student seats payment
+// --------------------------------------------------
+export const verifyAdditionalSeatsPayment =
+  async (req, res) => {
+    try {
+      const schoolId = getSchoolId(req);
+      const { reference } = req.params;
+
+      if (!schoolId) {
+        return res.status(400).json({
+          message:
+            "User is not associated with a school.",
+        });
+      }
+
+      if (!reference?.trim()) {
+        return res.status(400).json({
+          message:
+            "Payment reference is required.",
+        });
+      }
+
+      const payment =
+        await Payment.findOne({
+          paymentReference:
+            reference.trim(),
+
+          school:
+            schoolId,
+
+          type:
+            "additional_seats",
+        });
+
+      if (!payment) {
+        return res.status(404).json({
+          message:
+            "Additional-seat payment not found.",
+        });
+      }
+
+      if (
+        payment.status ===
+        "successful"
+      ) {
+        const subscription =
+          payment.subscription
+            ? await Subscription.findOne({
+                _id:
+                  payment.subscription,
+
+                school:
+                  schoolId,
+              })
+            : null;
+
+        return res.status(200).json({
+          message:
+            "Additional-seat payment has already been verified successfully.",
+
+          payment,
+
+          subscription,
+        });
+      }
+
+      if (
+        payment.status !==
+        "pending"
+      ) {
+        return res.status(400).json({
+          message:
+            `This payment is ${payment.status}.`,
+
+          payment,
+        });
+      }
+
+      const transaction =
+        await verifyTransaction(
+          reference.trim()
+        );
+
+      if (
+        transaction.status ===
+        "abandoned"
+      ) {
+        return res.status(400).json({
+          message:
+            "Payment was abandoned. No seats were added.",
+
+          paymentStatus:
+            transaction.status,
+
+          payment,
+        });
+      }
+
+      const {
+        processSuccessfulSubscriptionPayment,
+      } = await import(
+        "./paymentController.js"
+      );
+
+      const result =
+        await processSuccessfulSubscriptionPayment({
+          paymentId:
+            payment._id,
+
+          transaction,
+        });
+
+      return res.status(200).json({
+        message:
+          result.alreadyProcessed
+            ? "Additional-seat payment has already been processed successfully."
+            : "Additional-seat payment verified successfully and seats added.",
+
+        payment:
+          result.payment,
+
+        subscription:
+          result.subscription,
+      });
+    } catch (error) {
+      console.error(
+        "Verify additional seats payment error:",
+        error
+      );
+
+      switch (error.message) {
+        case "PAYMENT_REFERENCE_MISMATCH":
+          return res.status(400).json({
+            message:
+              "Payment reference mismatch.",
+          });
+
+        case "PAYMENT_NOT_SUCCESSFUL":
+          return res.status(400).json({
+            message:
+              "Payment was not successful.",
+          });
+
+        case "PAYMENT_AMOUNT_MISMATCH":
+          return res.status(400).json({
+            message:
+              "Payment amount does not match the expected amount.",
+          });
+
+        case "SUBSCRIPTION_NOT_FOUND":
+          return res.status(404).json({
+            message:
+              "Associated subscription was not found.",
+          });
+
+        case "INVALID_ADDITIONAL_SEAT_QUANTITY":
+          return res.status(400).json({
+            message:
+              "Invalid additional seat quantity.",
+          });
+
+        default:
+          return res.status(500).json({
+            message:
+              "Failed to verify additional-seat payment.",
+            error: error.message,
+          });
+      }
+    }
+  };
 
