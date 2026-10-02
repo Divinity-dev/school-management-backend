@@ -29,6 +29,50 @@ const gradingScaleSnapshotSchema = new mongoose.Schema(
   }
 );
 
+const caComponentSnapshotSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    maximum: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const assessmentScoreSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    score: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    maximum: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
 const gradingSystemSnapshotSchema = new mongoose.Schema(
   {
     caMaximum: {
@@ -47,6 +91,11 @@ const gradingSystemSnapshotSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 1,
+    },
+
+    caComponents: {
+      type: [caComponentSnapshotSchema],
+      required: true,
     },
 
     gradingScale: {
@@ -101,6 +150,12 @@ const resultSchema = new mongoose.Schema(
       ref: "AcademicTerm",
       required: true,
       index: true,
+    },
+
+    assessmentScores: {
+      type: [assessmentScoreSchema],
+      required: true,
+      default: [],
     },
 
     caScore: {

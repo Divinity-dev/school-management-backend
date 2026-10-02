@@ -3,6 +3,8 @@ import FeeStructure from "../models/FeeStructure.js";
 import AcademicSession from "../models/AcademicSession.js";
 import AcademicTerm from "../models/AcademicTerm.js";
 import SchoolClass from "../models/SchoolClass.js";
+import Student from "../models/Student.js";
+import StudentFeeAccount from "../models/StudentFeeAccount.js";
 
 const getSchoolId = (req) => {
 return req.user?.school?._id || req.user?.school;
@@ -92,125 +94,198 @@ return FeeStructure.findById(id)
 };
 
 export const createFeeStructure = async (req, res) => {
-try {
-const schoolId = getSchoolId(req);
+  const mongoSession = await mongoose.startSession();
 
+  try {
+    const schoolId = getSchoolId(req);
 
-const {
-  academicSession,
-  academicTerm,
-  schoolClasses,
-  items,
-} = req.body;
+    const {
+      academicSession,
+      academicTerm,
+      schoolClasses,
+      items,
+    } = req.body;
 
-if (!schoolId) {
-  return res.status(400).json({
-    message: "School information is missing.",
-  });
-}
+    if (!schoolId) {
+      return res.status(400).json({
+        message: "School information is missing.",
+      });
+    }
 
-if (!academicSession || !academicTerm || !schoolClasses || !items) {
-  return res.status(400).json({
-    message:
-      "Academic session, academic term, school classes, and fee items are required.",
-  });
-}
+    if (
+      !academicSession ||
+      !academicTerm ||
+      !schoolClasses ||
+      !items
+    ) {
+      return res.status(400).json({
+        message:
+          "Academic session, academic term, school classes, and fee items are required.",
+      });
+    }
 
-const itemError = validateFeeItems(items);
+    const itemError = validateFeeItems(items);
 
-if (itemError) {
-  return res.status(400).json({
-    message: itemError,
-  });
-}
+    if (itemError) {
+      return res.status(400).json({
+        message: itemError,
+      });
+    }
 
-const classValidation = await validateSchoolClasses(
-  schoolClasses,
-  schoolId
-);
+    const classValidation = await validateSchoolClasses(
+      schoolClasses,
+      schoolId
+    );
 
-if (classValidation.error) {
-  return res.status(400).json({
-    message: classValidation.error,
-  });
-}
+    if (classValidation.error) {
+      return res.status(400).json({
+        message: classValidation.error,
+      });
+    }
 
-const classIds = classValidation.classIds;
+    const classIds = classValidation.classIds;
 
-const session = await AcademicSession.findOne({
-  _id: academicSession,
-  school: schoolId,
-});
+    const session = await AcademicSession.findOne({
+      _id: academicSession,
+      school: schoolId,
+    });
 
-if (!session) {
-  return res.status(404).json({
-    message: "Academic session not found in this school.",
-  });
-}
+    if (!session) {
+      return res.status(404).json({
+        message: "Academic session not found in this school.",
+      });
+    }
 
-const term = await AcademicTerm.findOne({
-  _id: academicTerm,
-  school: schoolId,
-  academicSession,
-});
+    const term = await AcademicTerm.findOne({
+      _id: academicTerm,
+      school: schoolId,
+      academicSession,
+    });
 
-if (!term) {
-  return res.status(404).json({
-    message:
-      "Academic term not found for this session and school.",
-  });
-}
+    if (!term) {
+      return res.status(404).json({
+        message:
+          "Academic term not found for this session and school.",
+      });
+    }
 
-const existingFeeStructure = await FeeStructure.findOne({
-  school: schoolId,
-  academicSession,
-  academicTerm,
-  schoolClasses: { $in: classIds },
-});
+    const existingFeeStructure = await FeeStructure.findOne({
+      school: schoolId,
+      academicSession,
+      academicTerm,
+      schoolClasses: { $in: classIds },
+    });
 
-if (existingFeeStructure) {
-  return res.status(400).json({
-    message:
-      "A fee structure already exists for one or more selected classes in this academic session and term.",
-  });
-}
+    if (existingFeeStructure) {
+      return res.status(400).json({
+        message:
+          "A fee structure already exists for one or more selected classes in this academic session and term.",
+      });
+    }
 
-const cleanedItems = items.map((item) => ({
-  name: item.name.trim(),
-  amount: item.amount,
-}));
+    const cleanedItems = items.map((item) => ({
+      name: item.name.trim(),
+      amount: item.amount,
+    }));
 
-const totalAmount = calculateTotalAmount(cleanedItems);
+    const totalAmount = calculateTotalAmount(cleanedItems);
 
-const feeStructure = await FeeStructure.create({
-  school: schoolId,
-  academicSession,
-  academicTerm,
-  schoolClasses: classIds,
-  items: cleanedItems,
-  totalAmount,
-});
+    /*
+     * Start a transaction so that the fee structure
+     * and student fee accounts are created together.
+     */
+    let feeStructure;
+    let studentFeeAccountsCreated = 0;
 
-const populatedFeeStructure = await getPopulatedFeeStructure(
-  feeStructure._id
-);
+    await mongoSession.withTransaction(async () => {
+      // -----------------------------------------------
+      // 1. Create the fee structure
+      // -----------------------------------------------
+      const createdFeeStructures =
+        await FeeStructure.create(
+          [
+            {
+              school: schoolId,
+              academicSession,
+              academicTerm,
+              schoolClasses: classIds,
+              items: cleanedItems,
+              totalAmount,
+            },
+          ],
+          {
+            session: mongoSession,
+          }
+        );
 
-return res.status(201).json({
-  message: "Fee structure created successfully.",
-  feeStructure: populatedFeeStructure,
-});
+      feeStructure = createdFeeStructures[0];
 
+      // -----------------------------------------------
+      // 2. Find all active students in the selected
+      //    classes for this academic session
+      // -----------------------------------------------
+      const students = await Student.find({
+        school: schoolId,
+        schoolClass: { $in: classIds },
+        academicSession,
+        isActive: true,
+      }).session(mongoSession);
 
-} catch (error) {
-console.error("Create fee structure error:", error);
+      // -----------------------------------------------
+      // 3. Create a fee account for each student
+      // -----------------------------------------------
+      if (students.length > 0) {
+        const feeAccounts = students.map((student) => ({
+          school: schoolId,
+          student: student._id,
+          feeStructure: feeStructure._id,
+          academicSession,
+          academicTerm,
+          totalAmountDue: totalAmount,
+          amountPaid: 0,
+          balance: totalAmount,
+          status:
+            totalAmount === 0
+              ? "paid"
+              : "unpaid",
+          isActive: true,
+        }));
 
+        await StudentFeeAccount.insertMany(
+          feeAccounts,
+          {
+            session: mongoSession,
+          }
+        );
 
-return res.status(500).json({
-  message: "Server error while creating fee structure.",
-});
+        studentFeeAccountsCreated = feeAccounts.length;
+      }
+    });
 
+    const populatedFeeStructure =
+      await getPopulatedFeeStructure(
+        feeStructure._id
+      );
 
-}
+    return res.status(201).json({
+      message:
+        "Fee structure created successfully.",
+      feeStructure: populatedFeeStructure,
+      studentFeeAccountsCreated,
+    });
+  } catch (error) {
+    console.error(
+      "Create fee structure error:",
+      error
+    );
+
+    return res.status(500).json({
+      message:
+        "Server error while creating fee structure.",
+    });
+  } finally {
+    await mongoSession.endSession();
+  }
 };
 
 export const updateFeeStructure = async (req, res) => {

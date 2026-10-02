@@ -31,6 +31,67 @@ const gradingScaleSchema = new mongoose.Schema(
   }
 );
 
+const caComponentSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    maximum: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const bankDetailsSchema = new mongoose.Schema(
+  {
+    accountName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    accountNumber: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    bankName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    bankCode: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    paymentInstructions: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    isProvided: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
 const schoolSchema = new mongoose.Schema(
   {
     name: {
@@ -78,6 +139,18 @@ const schoolSchema = new mongoose.Schema(
       default: "",
     },
 
+    bankDetails: {
+  type: bankDetailsSchema,
+  default: () => ({
+    accountName: "",
+    accountNumber: "",
+    bankName: "",
+    bankCode: "",
+    paymentInstructions: "",
+    isProvided: false,
+  }),
+},
+
     gradingSystem: {
       caMaximum: {
         type: Number,
@@ -95,6 +168,24 @@ const schoolSchema = new mongoose.Schema(
         type: Number,
         default: 100,
         min: 1,
+      },
+
+      caComponents: {
+        type: [caComponentSchema],
+        default: [
+          {
+            name: "1st Test",
+            maximum: 15,
+          },
+          {
+            name: "2nd Test",
+            maximum: 15,
+          },
+          {
+            name: "Other",
+            maximum: 10,
+          },
+        ],
       },
 
       gradingScale: {
@@ -152,7 +243,12 @@ const schoolSchema = new mongoose.Schema(
 
 schoolSchema.pre("validate", function (next) {
   if (this.gradingSystem) {
-    const { caMaximum, examMaximum, totalMaximum } = this.gradingSystem;
+    const {
+      caMaximum,
+      examMaximum,
+      totalMaximum,
+      caComponents,
+    } = this.gradingSystem;
 
     if (caMaximum + examMaximum !== totalMaximum) {
       return next(
@@ -160,6 +256,21 @@ schoolSchema.pre("validate", function (next) {
           "CA maximum and exam maximum must add up to the total maximum."
         )
       );
+    }
+
+    if (caComponents && caComponents.length > 0) {
+      const caComponentsTotal = caComponents.reduce(
+        (sum, component) => sum + component.maximum,
+        0
+      );
+
+      if (caComponentsTotal !== caMaximum) {
+        return next(
+          new Error(
+            `CA component maximums (${caComponentsTotal}) must add up to the CA maximum (${caMaximum}).`
+          )
+        );
+      }
     }
 
     if (

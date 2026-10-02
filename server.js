@@ -23,6 +23,7 @@ import feeStructureRoutes from "./routes/feeStructureRoutes.js";
 import studentFeeAccountRoutes from "./routes/studentFeeAccountRoutes.js";
 import parentPaymentRoutes from "./routes/parentPaymentRoutes.js";
 import announcementRoutes from "./routes/announcementRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
 import cors from "cors";
 
 
@@ -50,6 +51,11 @@ app.use(
 // Normal JSON parsing for all other requests
 app.use(express.json());
 
+app.use((req, res, next) => {
+  console.log("REQUEST:", req.method, req.originalUrl);
+  next();
+});
+
 // routes
 
 app.use("/api/auth", authRoutes);
@@ -73,6 +79,7 @@ app.use("/api/fee-structures", feeStructureRoutes);
 app.use("/api/student-fee-accounts", studentFeeAccountRoutes);
 app.use("/api/parent-payments", parentPaymentRoutes);
 app.use("/api/announcements", announcementRoutes);
+app.use("/api/users", userRoutes);
 
 connectDB();
 

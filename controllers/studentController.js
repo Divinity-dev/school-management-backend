@@ -703,7 +703,7 @@ export const getStudentGrowth = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // Get all students admitted during this session
+    // Get students admitted during this session
     // --------------------------------------------------
     const students = await Student.find({
       school: req.user.school,
@@ -740,7 +740,7 @@ export const getStudentGrowth = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // Count admissions by month
+    // Count new admissions by month
     // --------------------------------------------------
     const monthlyAdmissions = {};
 
@@ -754,23 +754,26 @@ export const getStudentGrowth = async (req, res) => {
     });
 
     // --------------------------------------------------
-    // Build cumulative growth data
+    // Build monthly growth data
     // --------------------------------------------------
-    let cumulativeStudents = 0;
-
     const growth = months.map(({ year, month }) => {
       const key = `${year}-${month}`;
-
-      cumulativeStudents += monthlyAdmissions[key] || 0;
 
       return {
         month: new Date(year, month, 1).toLocaleString(
           "en-US",
-          { month: "short" }
+          {
+            month: "short",
+          }
         ),
-        students: cumulativeStudents,
+        students: monthlyAdmissions[key] || 0,
       };
     });
+
+    // --------------------------------------------------
+    // Total students enrolled in this academic session
+    // --------------------------------------------------
+    const totalStudents = students.length;
 
     return res.status(200).json({
       academicSession: {
@@ -780,6 +783,7 @@ export const getStudentGrowth = async (req, res) => {
         endDate: session.endDate,
       },
       growth,
+      totalStudents,
     });
   } catch (error) {
     console.error("Get student growth error:", error);

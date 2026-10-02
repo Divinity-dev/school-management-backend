@@ -7,10 +7,10 @@ import AcademicTerm from "../models/AcademicTerm.js";
 import SubjectAssignment from "../models/SubjectAssignment.js";
 import School from "../models/School.js";
 
-/*
- * Verify that the logged-in teacher is actively assigned to
- * the requested subject, class, and academic session.
- */
+/* =========================================================
+   HELPERS
+========================================================= */
+
 const verifyTeacherSubjectAssignment = async ({
   teacherId,
   schoolId,
@@ -19,18 +19,271 @@ const verifyTeacherSubjectAssignment = async ({
   academicSession,
 }) => {
   return SubjectAssignment.findOne({
+    teacher: teacherId,
     school: schoolId,
-    academicSession,
     schoolClass,
     subject,
-    teacher: teacherId,
+    academicSession,
     isActive: true,
   });
 };
 
-// @desc    Create a student result
-// @route   POST /api/results
-// @access  Teacher
+const getConfiguredGradingSystem = (school) => {
+  const gradingSystem = school?.gradingSystem;
+
+  if (!gradingSystem) {
+    throw new Error("School grading system has not been configured.");
+  }
+
+  const caMaximum = Number(gradingSystem.caMaximum);
+  const examMaximum = Number(gradingSystem.examMaximum);
+  const totalMaximum = Number(gradingSystem.totalMaximum);
+
+  const caComponents = Array.isArray(gradingSystem.caComponents)
+    ? gradingSystem.caComponents.map((component) => ({
+        name: String(component.name || "").trim(),
+        maximum: Number(component.maximum),
+      }))
+    : [];
+
+  const gradingScale = Array.isArray(gradingSystem.gradingScale)
+    ? gradingSystem.gradingScale.map((rule) => ({
+        min: Number(rule.min),
+        max: Number(rule.max),
+        grade: String(rule.grade || "").trim(),
+        remark: String(rule.remark || "").trim(),
+      }))
+    : [];
+
+  if (
+    !Number.isFinite(caMaximum) ||
+    !Number.isFinite(examMaximum) ||
+    !Number.isFinite(totalMaximum)
+  ) {
+    throw new Error("School grading system contains invalid maximum scores.");
+  }
+
+  if (caMaximum + examMaximum !== totalMaximum) {
+    throw new Error(
+      "CA maximum and exam maximum must add up to the total maximum."
+    );
+  }
+
+  if (caComponents.length === 0 && caMaximum > 0) {
+    throw new Error("School has no CA assessment components configured.");
+  }
+
+  const componentNames = new Set();
+
+  for (const component of caComponents) {
+    if (!component.name) {
+      throw new Error("Every CA component must have a name.");
+    }
+
+    if (!Number.isFinite(component.maximum) || component.maximum < 0) {
+      throw new Error(
+        `Invalid maximum score for CA component "${component.name}".`
+      );
+    }
+
+    const normalizedName = component.name.toLowerCase();
+
+    if (componentNames.has(normalizedName)) {
+      throw new Error(
+        `Duplicate CA component name "${component.name}".`
+      );
+    }
+
+    componentNames.add(normalizedName);
+  }
+
+  const componentTotal = caComponents.reduce(
+    (sum, component) => sum + component.maximum,
+    0
+  );
+
+  if (componentTotal !== caMaximum) {
+    throw new Error(
+      `CA assessment components total ${componentTotal}, but CA maximum is ${caMaximum}.`
+    );
+  }
+
+  if (gradingScale.length === 0) {
+    throw new Error("School grading scale has not been configured.");
+  }
+
+  for (const rule of gradingScale) {
+    if (
+      !Number.isFinite(rule.min) ||
+      !Number.isFinite(rule.max) ||
+      !rule.grade ||
+      !rule.remark
+    ) {
+      throw new Error("School grading scale contains invalid rules.");
+    }
+
+    if (rule.min > rule.max) {
+      throw new Error(
+        `Invalid grading rule for grade "${rule.grade}".`
+      );
+    }
+  }
+
+  return {
+    caMaximum,
+    examMaximum,
+    totalMaximum,
+    caComponents,
+    gradingScale,
+  };
+};
+
+const buildGradingSystemSnapshot = (gradingSystem) => ({
+  caMaximum: gradingSystem.caMaximum,
+  examMaximum: gradingSystem.examMaximum,
+  totalMaximum: gradingSystem.totalMaximum,
+
+  caComponents: gradingSystem.caComponents.map((component) => ({
+    name: component.name,
+    maximum: component.maximum,
+  })),
+
+  gradingScale: gradingSystem.gradingScale.map((rule) => ({
+    min: rule.min,
+    max: rule.max,
+    grade: rule.grade,
+    remark: rule.remark,
+  })),
+});
+
+const calculateResultScores = ({
+  assessmentScores,
+  examScore,
+  gradingSystem,
+}) => {
+  if (!Array.isArray(assessmentScores)) {
+    return {
+      error: "assessmentScores must be an array.",
+    };
+  }
+
+  const configuredComponents = gradingSystem.caComponents;
+
+  if (assessmentScores.length !== configuredComponents.length) {
+    return {
+      error:
+        "All configured CA assessment components must have a score.",
+    };
+  }
+
+  const submittedMap = new Map();
+
+  for (const assessment of assessmentScores) {
+    if (!assessment || !assessment.name) {
+      return {
+        error: "Every CA assessment score must have a component name.",
+      };
+    }
+
+    const normalizedName = String(assessment.name)
+      .trim()
+      .toLowerCase();
+
+    if (submittedMap.has(normalizedName)) {
+      return {
+        error: `Duplicate CA assessment component "${assessment.name}".`,
+      };
+    }
+
+    submittedMap.set(normalizedName, assessment.score);
+  }
+
+  const normalizedAssessmentScores = [];
+
+  for (const component of configuredComponents) {
+    const normalizedName = component.name.toLowerCase();
+
+    if (!submittedMap.has(normalizedName)) {
+      return {
+        error: `Score for "${component.name}" is required.`,
+      };
+    }
+
+    const score = Number(submittedMap.get(normalizedName));
+
+    if (!Number.isFinite(score)) {
+      return {
+        error: `Score for "${component.name}" must be a valid number.`,
+      };
+    }
+
+    if (score < 0 || score > component.maximum) {
+      return {
+        error: `"${component.name}" score must be between 0 and ${component.maximum}.`,
+      };
+    }
+
+    normalizedAssessmentScores.push({
+      name: component.name,
+      score,
+      maximum: component.maximum,
+    });
+  }
+
+  const numericExamScore = Number(examScore);
+
+  if (!Number.isFinite(numericExamScore)) {
+    return {
+      error: "Exam score must be a valid number.",
+    };
+  }
+
+  if (
+    numericExamScore < 0 ||
+    numericExamScore > gradingSystem.examMaximum
+  ) {
+    return {
+      error: `Exam score must be between 0 and ${gradingSystem.examMaximum}.`,
+    };
+  }
+
+  const caScore = normalizedAssessmentScores.reduce(
+    (sum, assessment) => sum + assessment.score,
+    0
+  );
+
+  const total = caScore + numericExamScore;
+
+  if (total > gradingSystem.totalMaximum) {
+    return {
+      error: `Total score cannot exceed ${gradingSystem.totalMaximum}.`,
+    };
+  }
+
+  const gradingRule = gradingSystem.gradingScale.find(
+    (rule) => total >= rule.min && total <= rule.max
+  );
+
+  if (!gradingRule) {
+    return {
+      error: `No grading rule exists for total score ${total}.`,
+    };
+  }
+
+  return {
+    assessmentScores: normalizedAssessmentScores,
+    caScore,
+    examScore: numericExamScore,
+    total,
+    grade: gradingRule.grade,
+    remark: gradingRule.remark,
+  };
+};
+
+/* =========================================================
+   CREATE RESULT
+========================================================= */
+
 export const createResult = async (req, res) => {
   try {
     const {
@@ -39,48 +292,109 @@ export const createResult = async (req, res) => {
       subject,
       academicSession,
       academicTerm,
-      caScore,
+      assessmentScores,
       examScore,
     } = req.body;
-
-    // --------------------------------------------------
-    // 1. Basic validation
-    // --------------------------------------------------
 
     if (
       !student ||
       !schoolClass ||
       !subject ||
       !academicSession ||
-      !academicTerm ||
-      caScore === undefined ||
-      examScore === undefined
+      !academicTerm
     ) {
       return res.status(400).json({
         message:
-          "Student, class, subject, academic session, academic term, CA score, and exam score are required.",
+          "Student, class, subject, academic session and academic term are required.",
       });
     }
 
-    // --------------------------------------------------
-    // 2. Verify authenticated user is a teacher
-    // --------------------------------------------------
+    const studentRecord = await Student.findOne({
+      _id: student,
+      school: req.user.school,
+      isActive: true,
+    });
 
-    if (req.user.role !== "teacher") {
+    if (!studentRecord) {
+      return res.status(404).json({
+        message: "Student not found.",
+      });
+    }
+
+    const schoolClassRecord = await SchoolClass.findOne({
+      _id: schoolClass,
+      school: req.user.school,
+      isActive: true,
+    });
+
+    if (!schoolClassRecord) {
+      return res.status(404).json({
+        message: "Class not found.",
+      });
+    }
+
+    const subjectRecord = await Subject.findOne({
+      _id: subject,
+      school: req.user.school,
+      isActive: true,
+    });
+
+    if (!subjectRecord) {
+      return res.status(404).json({
+        message: "Subject not found.",
+      });
+    }
+
+    const sessionRecord = await AcademicSession.findOne({
+      _id: academicSession,
+      school: req.user.school,
+    });
+
+    if (!sessionRecord) {
+      return res.status(404).json({
+        message: "Academic session not found.",
+      });
+    }
+
+    const termRecord = await AcademicTerm.findOne({
+      _id: academicTerm,
+      school: req.user.school,
+    });
+
+    if (!termRecord) {
+      return res.status(404).json({
+        message: "Academic term not found.",
+      });
+    }
+
+    const assignment = await verifyTeacherSubjectAssignment({
+      teacherId: req.user._id,
+      schoolId: req.user.school,
+      schoolClass,
+      subject,
+      academicSession,
+    });
+
+    if (!assignment) {
       return res.status(403).json({
-        message: "Only teachers can enter results.",
+        message:
+          "You are not assigned to teach this subject for this class and academic session.",
       });
     }
 
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "Teacher is not associated with a school.",
+    const existingResult = await Result.findOne({
+      school: req.user.school,
+      student,
+      subject,
+      academicSession,
+      academicTerm,
+    });
+
+    if (existingResult) {
+      return res.status(409).json({
+        message: "A result already exists for this student and subject.",
       });
     }
-
-    // --------------------------------------------------
-    // 3. Get the school
-    // --------------------------------------------------
 
     const school = await School.findById(req.user.school);
 
@@ -90,215 +404,19 @@ export const createResult = async (req, res) => {
       });
     }
 
-    if (!school.isActive) {
-      return res.status(403).json({
-        message: "School is inactive.",
-      });
-    }
+    const gradingSystem = getConfiguredGradingSystem(school);
 
-    // --------------------------------------------------
-    // 4. Get school's grading configuration
-    // --------------------------------------------------
-
-    const gradingSystem = school.gradingSystem;
-
-    if (!gradingSystem) {
-      return res.status(400).json({
-        message: "School grading system has not been configured.",
-      });
-    }
-
-    const {
-      caMaximum,
-      examMaximum,
-      totalMaximum,
-      gradingScale,
-    } = gradingSystem;
-
-    // --------------------------------------------------
-    // 5. Validate scores
-    // --------------------------------------------------
-
-    const numericCaScore = Number(caScore);
-    const numericExamScore = Number(examScore);
-
-    if (
-      !Number.isFinite(numericCaScore) ||
-      !Number.isFinite(numericExamScore)
-    ) {
-      return res.status(400).json({
-        message: "CA score and exam score must be valid numbers.",
-      });
-    }
-
-    if (numericCaScore < 0 || numericCaScore > caMaximum) {
-      return res.status(400).json({
-        message: `CA score must be between 0 and ${caMaximum}.`,
-      });
-    }
-
-    if (numericExamScore < 0 || numericExamScore > examMaximum) {
-      return res.status(400).json({
-        message: `Exam score must be between 0 and ${examMaximum}.`,
-      });
-    }
-
-    // --------------------------------------------------
-    // 6. Verify student belongs to teacher's school
-    // --------------------------------------------------
-
-    const studentRecord = await Student.findOne({
-      _id: student,
-      school: req.user.school,
+    const calculated = calculateResultScores({
+      assessmentScores,
+      examScore,
+      gradingSystem,
     });
 
-    if (!studentRecord) {
-      return res.status(404).json({
-        message: "Student not found in your school.",
-      });
-    }
-
-    // --------------------------------------------------
-    // 7. Verify class belongs to teacher's school
-    // --------------------------------------------------
-
-    const classRecord = await SchoolClass.findOne({
-      _id: schoolClass,
-      school: req.user.school,
-    });
-
-    if (!classRecord) {
-      return res.status(404).json({
-        message: "Class not found in your school.",
-      });
-    }
-
-    // --------------------------------------------------
-    // 8. Verify student belongs to selected class
-    // --------------------------------------------------
-
-    if (String(studentRecord.schoolClass) !== String(schoolClass)) {
+    if (calculated.error) {
       return res.status(400).json({
-        message: "Student does not belong to the selected class.",
+        message: calculated.error,
       });
     }
-
-    // --------------------------------------------------
-    // 9. Verify subject belongs to teacher's school
-    // --------------------------------------------------
-
-    const subjectRecord = await Subject.findOne({
-      _id: subject,
-      school: req.user.school,
-    });
-
-    if (!subjectRecord) {
-      return res.status(404).json({
-        message: "Subject not found in your school.",
-      });
-    }
-
-    // --------------------------------------------------
-    // 10. Verify academic session belongs to school
-    // --------------------------------------------------
-
-    const sessionRecord = await AcademicSession.findOne({
-      _id: academicSession,
-      school: req.user.school,
-    });
-
-    if (!sessionRecord) {
-      return res.status(404).json({
-        message: "Academic session not found in your school.",
-      });
-    }
-
-    // --------------------------------------------------
-    // 11. Verify academic term belongs to school/session
-    // --------------------------------------------------
-
-    const termRecord = await AcademicTerm.findOne({
-      _id: academicTerm,
-      school: req.user.school,
-      academicSession,
-    });
-
-    if (!termRecord) {
-      return res.status(404).json({
-        message: "Academic term not found for this school/session.",
-      });
-    }
-
-    // --------------------------------------------------
-    // 12. Verify teacher assignment
-    // --------------------------------------------------
-
-    const subjectAssignment =
-      await verifyTeacherSubjectAssignment({
-        teacherId: req.user._id,
-        schoolId: req.user.school,
-        schoolClass,
-        subject,
-        academicSession,
-      });
-
-    if (!subjectAssignment) {
-      return res.status(403).json({
-        message:
-          "You are not assigned to teach this subject for this class and academic session.",
-      });
-    }
-
-    // --------------------------------------------------
-    // 13. Prevent duplicate result
-    // --------------------------------------------------
-
-    const existingResult = await Result.findOne({
-      school: req.user.school,
-      student,
-      schoolClass,
-      subject,
-      academicSession,
-      academicTerm,
-    });
-
-    if (existingResult) {
-      return res.status(409).json({
-        message:
-          "A result already exists for this student, subject, academic session, and term.",
-        result: existingResult,
-      });
-    }
-
-    // --------------------------------------------------
-    // 14. Calculate total
-    // --------------------------------------------------
-
-    const total = numericCaScore + numericExamScore;
-
-    if (total > totalMaximum) {
-      return res.status(400).json({
-        message: `Total score cannot exceed ${totalMaximum}.`,
-      });
-    }
-
-    // --------------------------------------------------
-    // 15. Determine grade and remark
-    // --------------------------------------------------
-
-    const gradingRule = gradingScale.find(
-      (rule) => total >= rule.min && total <= rule.max
-    );
-
-    if (!gradingRule) {
-      return res.status(400).json({
-        message: `No grading rule exists for total score ${total}.`,
-      });
-    }
-
-    // --------------------------------------------------
-    // 16. Create result
-    // --------------------------------------------------
 
     const result = await Result.create({
       school: req.user.school,
@@ -308,88 +426,44 @@ export const createResult = async (req, res) => {
       academicSession,
       academicTerm,
 
-      caScore: numericCaScore,
-      examScore: numericExamScore,
-      total,
+      assessmentScores: calculated.assessmentScores,
 
-      grade: gradingRule.grade,
-      remark: gradingRule.remark,
+      caScore: calculated.caScore,
+      examScore: calculated.examScore,
+      total: calculated.total,
+      grade: calculated.grade,
+      remark: calculated.remark,
 
-      gradingSystem: {
-        caMaximum,
-        examMaximum,
-        totalMaximum,
-        gradingScale: gradingScale.map((rule) => ({
-          min: rule.min,
-          max: rule.max,
-          grade: rule.grade,
-          remark: rule.remark,
-        })),
-      },
+      gradingSystem: buildGradingSystemSnapshot(gradingSystem),
 
       status: "draft",
       enteredBy: req.user._id,
     });
 
-    // --------------------------------------------------
-    // 17. Return populated result
-    // --------------------------------------------------
-
-    const populatedResult = await Result.findById(result._id)
-      .populate("student", "studentId firstName middleName lastName")
-      .populate("schoolClass", "name arm section")
-      .populate("subject", "name code")
-      .populate("academicSession", "name startDate endDate")
-      .populate("academicTerm", "name startDate endDate")
-      .populate("enteredBy", "firstName lastName email");
-
     return res.status(201).json({
       message: "Result created successfully.",
-      result: populatedResult,
+      result,
     });
   } catch (error) {
     console.error("Create result error:", error);
 
-    if (error.code === 11000) {
-      return res.status(409).json({
-        message:
-          "A result already exists for this student, subject, academic session, and term.",
-      });
-    }
-
     return res.status(500).json({
-      message: "Server error while creating result.",
+      message: error.message || "Failed to create result.",
     });
   }
 };
 
-// @desc    Update a student result
-// @route   PUT /api/results/:id
-// @access  Teacher
+/* =========================================================
+   UPDATE RESULT
+========================================================= */
+
 export const updateResult = async (req, res) => {
   try {
     const { id } = req.params;
-    const { caScore, examScore } = req.body;
-
-    // --------------------------------------------------
-    // 1. Verify authenticated user is a teacher
-    // --------------------------------------------------
-
-    if (req.user.role !== "teacher") {
-      return res.status(403).json({
-        message: "Only teachers can edit results.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "Teacher is not associated with a school.",
-      });
-    }
-
-    // --------------------------------------------------
-    // 2. Find result within teacher's school
-    // --------------------------------------------------
+    const {
+      assessmentScores,
+      examScore,
+    } = req.body;
 
     const result = await Result.findOne({
       _id: id,
@@ -402,49 +476,11 @@ export const updateResult = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------
-    // 3. Only draft results can be edited
-    // --------------------------------------------------
-
     if (result.status !== "draft") {
       return res.status(400).json({
-        message: `This result cannot be edited because its status is "${result.status}".`,
+        message: "Only draft results can be updated.",
       });
     }
-
-    // --------------------------------------------------
-    // 4. Verify teacher entered the result
-    // --------------------------------------------------
-
-    if (String(result.enteredBy) !== String(req.user._id)) {
-      return res.status(403).json({
-        message: "You can only edit results that you entered.",
-      });
-    }
-
-    // --------------------------------------------------
-    // 5. Verify teacher's current assignment
-    // --------------------------------------------------
-
-    const subjectAssignment =
-      await verifyTeacherSubjectAssignment({
-        teacherId: req.user._id,
-        schoolId: req.user.school,
-        schoolClass: result.schoolClass,
-        subject: result.subject,
-        academicSession: result.academicSession,
-      });
-
-    if (!subjectAssignment) {
-      return res.status(403).json({
-        message:
-          "You are no longer assigned to teach this subject for this class and academic session.",
-      });
-    }
-
-    // --------------------------------------------------
-    // 6. Get current school grading system
-    // --------------------------------------------------
 
     const school = await School.findById(req.user.school);
 
@@ -454,154 +490,53 @@ export const updateResult = async (req, res) => {
       });
     }
 
-    if (!school.isActive) {
-      return res.status(403).json({
-        message: "School is inactive.",
-      });
-    }
+    const gradingSystem = getConfiguredGradingSystem(school);
 
-    const gradingSystem = school.gradingSystem;
+    const calculated = calculateResultScores({
+      assessmentScores,
+      examScore,
+      gradingSystem,
+    });
 
-    if (!gradingSystem) {
+    if (calculated.error) {
       return res.status(400).json({
-        message: "School grading system has not been configured.",
+        message: calculated.error,
       });
     }
 
-    const {
-      caMaximum,
-      examMaximum,
-      totalMaximum,
-      gradingScale,
-    } = gradingSystem;
+    result.assessmentScores = calculated.assessmentScores;
 
-    // --------------------------------------------------
-    // 7. Validate submitted scores
-    // --------------------------------------------------
+    result.caScore = calculated.caScore;
+    result.examScore = calculated.examScore;
+    result.total = calculated.total;
+    result.grade = calculated.grade;
+    result.remark = calculated.remark;
 
-    if (caScore === undefined || examScore === undefined) {
-      return res.status(400).json({
-        message: "CA score and exam score are required.",
-      });
-    }
-
-    const numericCaScore = Number(caScore);
-    const numericExamScore = Number(examScore);
-
-    if (
-      !Number.isFinite(numericCaScore) ||
-      !Number.isFinite(numericExamScore)
-    ) {
-      return res.status(400).json({
-        message: "CA score and exam score must be valid numbers.",
-      });
-    }
-
-    if (numericCaScore < 0 || numericCaScore > caMaximum) {
-      return res.status(400).json({
-        message: `CA score must be between 0 and ${caMaximum}.`,
-      });
-    }
-
-    if (numericExamScore < 0 || numericExamScore > examMaximum) {
-      return res.status(400).json({
-        message: `Exam score must be between 0 and ${examMaximum}.`,
-      });
-    }
-
-    // --------------------------------------------------
-    // 8. Calculate new total
-    // --------------------------------------------------
-
-    const total = numericCaScore + numericExamScore;
-
-    if (total > totalMaximum) {
-      return res.status(400).json({
-        message: `Total score cannot exceed ${totalMaximum}.`,
-      });
-    }
-
-    // --------------------------------------------------
-    // 9. Determine new grade and remark
-    // --------------------------------------------------
-
-    const gradingRule = gradingScale.find(
-      (rule) => total >= rule.min && total <= rule.max
-    );
-
-    if (!gradingRule) {
-      return res.status(400).json({
-        message: `No grading rule exists for total score ${total}.`,
-      });
-    }
-
-    // --------------------------------------------------
-    // 10. Update result
-    // --------------------------------------------------
-
-    result.caScore = numericCaScore;
-    result.examScore = numericExamScore;
-    result.total = total;
-    result.grade = gradingRule.grade;
-    result.remark = gradingRule.remark;
-
-    result.gradingSystem = {
-      caMaximum,
-      examMaximum,
-      totalMaximum,
-      gradingScale: gradingScale.map((rule) => ({
-        min: rule.min,
-        max: rule.max,
-        grade: rule.grade,
-        remark: rule.remark,
-      })),
-    };
+    result.gradingSystem =
+      buildGradingSystemSnapshot(gradingSystem);
 
     await result.save();
 
-    // --------------------------------------------------
-    // 11. Return populated result
-    // --------------------------------------------------
-
-    const populatedResult = await Result.findById(result._id)
-      .populate("student", "studentId firstName middleName lastName")
-      .populate("schoolClass", "name arm section")
-      .populate("subject", "name code")
-      .populate("academicSession", "name startDate endDate")
-      .populate("academicTerm", "name startDate endDate")
-      .populate("enteredBy", "firstName lastName email");
-
     return res.status(200).json({
       message: "Result updated successfully.",
-      result: populatedResult,
+      result,
     });
   } catch (error) {
     console.error("Update result error:", error);
 
     return res.status(500).json({
-      message: "Server error while updating result.",
+      message: error.message || "Failed to update result.",
     });
   }
 };
 
-// @desc    Submit a result for review
-// @route   POST /api/results/:id/submit
-// @access  Teacher
+/* =========================================================
+   SUBMIT RESULT FOR REVIEW
+========================================================= */
+
 export const submitResultForReview = async (req, res) => {
   try {
     const { id } = req.params;
-
-    if (req.user.role !== "teacher") {
-      return res.status(403).json({
-        message: "Only teachers can submit results for review.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "Teacher is not associated with a school.",
-      });
-    }
 
     const result = await Result.findOne({
       _id: id,
@@ -611,12 +546,6 @@ export const submitResultForReview = async (req, res) => {
     if (!result) {
       return res.status(404).json({
         message: "Result not found.",
-      });
-    }
-
-    if (String(result.enteredBy) !== String(req.user._id)) {
-      return res.status(403).json({
-        message: "You can only submit results that you entered.",
       });
     }
 
@@ -626,65 +555,30 @@ export const submitResultForReview = async (req, res) => {
       });
     }
 
-    const subjectAssignment =
-      await verifyTeacherSubjectAssignment({
-        teacherId: req.user._id,
-        schoolId: req.user.school,
-        schoolClass: result.schoolClass,
-        subject: result.subject,
-        academicSession: result.academicSession,
-      });
-
-    if (!subjectAssignment) {
-      return res.status(403).json({
-        message:
-          "You are no longer assigned to teach this subject for this class and academic session.",
-      });
-    }
-
     result.status = "pending_review";
 
     await result.save();
 
-    const populatedResult = await Result.findById(result._id)
-      .populate("student", "studentId firstName middleName lastName")
-      .populate("schoolClass", "name arm section")
-      .populate("subject", "name code")
-      .populate("academicSession", "name startDate endDate")
-      .populate("academicTerm", "name startDate endDate")
-      .populate("enteredBy", "firstName lastName email");
-
     return res.status(200).json({
-      message: "Result submitted for review successfully.",
-      result: populatedResult,
+      message: "Result submitted for review.",
+      result,
     });
   } catch (error) {
     console.error("Submit result for review error:", error);
 
     return res.status(500).json({
-      message: "Server error while submitting result for review.",
+      message: error.message || "Failed to submit result for review.",
     });
   }
 };
 
-// @desc    Publish a result after school admin review
-// @route   POST /api/results/:id/publish
-// @access  School Admin
+/* =========================================================
+   PUBLISH RESULT
+========================================================= */
+
 export const publishResult = async (req, res) => {
   try {
     const { id } = req.params;
-
-    if (req.user.role !== "schoolAdmin") {
-      return res.status(403).json({
-        message: "Only school admins can publish results.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "School admin is not associated with a school.",
-      });
-    }
 
     const result = await Result.findOne({
       _id: id,
@@ -697,21 +591,10 @@ export const publishResult = async (req, res) => {
       });
     }
 
-    if (result.status === "published") {
-      return res.status(400).json({
-        message: "This result has already been published.",
-      });
-    }
-
-    if (result.status === "locked") {
-      return res.status(400).json({
-        message: "This result is locked and cannot be published.",
-      });
-    }
-
     if (result.status !== "pending_review") {
       return res.status(400).json({
-        message: "Only results pending review can be published.",
+        message:
+          "Only results pending review can be published.",
       });
     }
 
@@ -720,45 +603,26 @@ export const publishResult = async (req, res) => {
 
     await result.save();
 
-    const populatedResult = await Result.findById(result._id)
-      .populate("student", "studentId firstName middleName lastName")
-      .populate("schoolClass", "name arm section")
-      .populate("subject", "name code")
-      .populate("academicSession", "name startDate endDate")
-      .populate("academicTerm", "name startDate endDate")
-      .populate("enteredBy", "firstName lastName email");
-
     return res.status(200).json({
       message: "Result published successfully.",
-      result: populatedResult,
+      result,
     });
   } catch (error) {
     console.error("Publish result error:", error);
 
     return res.status(500).json({
-      message: "Server error while publishing result.",
+      message: error.message || "Failed to publish result.",
     });
   }
 };
 
-// @desc    Reject a result and send it back to teacher
-// @route   POST /api/results/:id/reject
-// @access  School Admin
+/* =========================================================
+   REJECT RESULT
+========================================================= */
+
 export const rejectResult = async (req, res) => {
   try {
     const { id } = req.params;
-
-    if (req.user.role !== "schoolAdmin") {
-      return res.status(403).json({
-        message: "Only school admins can reject results.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "School admin is not associated with a school.",
-      });
-    }
 
     const result = await Result.findOne({
       _id: id,
@@ -773,7 +637,8 @@ export const rejectResult = async (req, res) => {
 
     if (result.status !== "pending_review") {
       return res.status(400).json({
-        message: "Only results pending review can be rejected.",
+        message:
+          "Only results pending review can be rejected.",
       });
     }
 
@@ -781,45 +646,26 @@ export const rejectResult = async (req, res) => {
 
     await result.save();
 
-    const populatedResult = await Result.findById(result._id)
-      .populate("student", "studentId firstName middleName lastName")
-      .populate("schoolClass", "name arm section")
-      .populate("subject", "name code")
-      .populate("academicSession", "name startDate endDate")
-      .populate("academicTerm", "name startDate endDate")
-      .populate("enteredBy", "firstName lastName email");
-
     return res.status(200).json({
-      message: "Result rejected and returned to draft successfully.",
-      result: populatedResult,
+      message: "Result rejected and returned to draft.",
+      result,
     });
   } catch (error) {
     console.error("Reject result error:", error);
 
     return res.status(500).json({
-      message: "Server error while rejecting result.",
+      message: error.message || "Failed to reject result.",
     });
   }
 };
 
-// @desc    Lock a published result permanently
-// @route   POST /api/results/:id/lock
-// @access  School Admin
+/* =========================================================
+   LOCK RESULT
+========================================================= */
+
 export const lockResult = async (req, res) => {
   try {
     const { id } = req.params;
-
-    if (req.user.role !== "schoolAdmin") {
-      return res.status(403).json({
-        message: "Only school admins can lock results.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "School admin is not associated with a school.",
-      });
-    }
 
     const result = await Result.findOne({
       _id: id,
@@ -829,12 +675,6 @@ export const lockResult = async (req, res) => {
     if (!result) {
       return res.status(404).json({
         message: "Result not found.",
-      });
-    }
-
-    if (result.status === "locked") {
-      return res.status(400).json({
-        message: "This result is already locked.",
       });
     }
 
@@ -849,973 +689,327 @@ export const lockResult = async (req, res) => {
 
     await result.save();
 
-    const populatedResult = await Result.findById(result._id)
-      .populate("student", "studentId firstName middleName lastName")
-      .populate("schoolClass", "name arm section")
-      .populate("subject", "name code")
-      .populate("academicSession", "name startDate endDate")
-      .populate("academicTerm", "name startDate endDate")
-      .populate("enteredBy", "firstName lastName email");
-
     return res.status(200).json({
       message: "Result locked successfully.",
-      result: populatedResult,
+      result,
     });
   } catch (error) {
     console.error("Lock result error:", error);
 
     return res.status(500).json({
-      message: "Server error while locking result.",
+      message: error.message || "Failed to lock result.",
     });
   }
 };
 
-// @desc    Get logged-in student's published and locked results
-// @route   GET /api/results/my-results
-// @access  Student
+/* =========================================================
+   GET MY RESULTS
+========================================================= */
+
 export const getMyResults = async (req, res) => {
   try {
-    if (req.user.role !== "student") {
-      return res.status(403).json({
-        message: "Only students can access their results.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "Student is not associated with a school.",
-      });
-    }
-
     const student = await Student.findOne({
       user: req.user._id,
       school: req.user.school,
-    });
+      isActive: true,
+    }).populate("user", "firstName lastName email");
 
     if (!student) {
       return res.status(404).json({
-        message: "Student record not found.",
+        message: "Student profile not found.",
       });
     }
 
-    const { academicSession, academicTerm } = req.query;
-
-    const query = {
+    const results = await Result.find({
       school: req.user.school,
       student: student._id,
       status: {
         $in: ["published", "locked"],
       },
-    };
-
-    if (academicSession) {
-      query.academicSession = academicSession;
-    }
-
-    if (academicTerm) {
-      query.academicTerm = academicTerm;
-    }
-
-    const results = await Result.find(query)
+    })
       .populate("subject", "name code")
-      .populate("schoolClass", "name arm section")
-      .populate("academicSession", "name startDate endDate")
-      .populate("academicTerm", "name startDate endDate")
+      .populate("schoolClass", "name")
+      .populate("academicSession", "name")
+      .populate("academicTerm", "name")
       .sort({
-        academicSession: 1,
-        academicTerm: 1,
+        academicSession: -1,
+        academicTerm: -1,
         subject: 1,
       });
 
     return res.status(200).json({
-      message: "Student results retrieved successfully.",
       student: {
         _id: student._id,
         studentId: student.studentId,
-        firstName: student.firstName,
-        middleName: student.middleName,
-        lastName: student.lastName,
+        admissionNumber: student.admissionNumber,
+        firstName: student.user?.firstName || "",
+        lastName: student.user?.lastName || "",
       },
-      count: results.length,
       results,
     });
   } catch (error) {
     console.error("Get my results error:", error);
 
     return res.status(500).json({
-      message: "Server error while retrieving student results.",
+      message: error.message || "Failed to fetch results.",
     });
   }
 };
 
-// @desc    Get class performance analytics
-// @route   GET /api/results/analytics/class-averages
-// @access  School Admin
+/* =========================================================
+   GET CLASS AVERAGES
+========================================================= */
+
 export const getClassAverages = async (req, res) => {
   try {
-    const { schoolClass, academicSession, academicTerm } = req.query;
-
-    if (req.user.role !== "schoolAdmin") {
-      return res.status(403).json({
-        message: "Only school admins can access class analytics.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "School admin is not associated with a school.",
-      });
-    }
-
-    if (!schoolClass || !academicSession || !academicTerm) {
-      return res.status(400).json({
-        message:
-          "schoolClass, academicSession, and academicTerm are required.",
-      });
-    }
-
-    const classRecord = await SchoolClass.findOne({
-      _id: schoolClass,
-      school: req.user.school,
-    });
-
-    if (!classRecord) {
-      return res.status(404).json({
-        message: "Class not found in your school.",
-      });
-    }
-
-    const sessionRecord = await AcademicSession.findOne({
-      _id: academicSession,
-      school: req.user.school,
-    });
-
-    if (!sessionRecord) {
-      return res.status(404).json({
-        message: "Academic session not found in your school.",
-      });
-    }
-
-    const termRecord = await AcademicTerm.findOne({
-      _id: academicTerm,
-      school: req.user.school,
-      academicSession,
-    });
-
-    if (!termRecord) {
-      return res.status(404).json({
-        message: "Academic term not found for this school/session.",
-      });
-    }
-
-    const resultQuery = {
-      school: req.user.school,
+    const {
       schoolClass,
+      subject,
       academicSession,
       academicTerm,
+    } = req.query;
+
+    const filter = {
+      school: req.user.school,
       status: {
         $in: ["published", "locked"],
       },
     };
 
-    const results = await Result.find(resultQuery)
-      .populate("subject", "name code")
-      .populate("student", "studentId firstName middleName lastName")
-      .sort({ subject: 1, total: -1 });
+    if (schoolClass) filter.schoolClass = schoolClass;
+    if (subject) filter.subject = subject;
+    if (academicSession) filter.academicSession = academicSession;
+    if (academicTerm) filter.academicTerm = academicTerm;
 
-    if (results.length === 0) {
-      return res.status(200).json({
-        message: "No published or locked results found for this class.",
-        class: {
-          _id: classRecord._id,
-          name: classRecord.name,
-          arm: classRecord.arm,
-          section: classRecord.section,
+    const averages = await Result.aggregate([
+      {
+        $match: filter,
+      },
+      {
+        $group: {
+          _id: {
+            schoolClass: "$schoolClass",
+            subject: "$subject",
+          },
+          average: {
+            $avg: "$total",
+          },
+          highest: {
+            $max: "$total",
+          },
+          lowest: {
+            $min: "$total",
+          },
+          count: {
+            $sum: 1,
+          },
         },
-        academicSession: {
-          _id: sessionRecord._id,
-          name: sessionRecord.name,
+      },
+      {
+        $sort: {
+          "_id.schoolClass": 1,
+          "_id.subject": 1,
         },
-        academicTerm: {
-          _id: termRecord._id,
-          name: termRecord.name,
-        },
-        summary: {
-          totalStudents: 0,
-          totalResults: 0,
-          overallAverage: 0,
-        },
-        subjects: [],
+      },
+    ]);
+
+    return res.status(200).json({
+      averages,
+    });
+  } catch (error) {
+    console.error("Get class averages error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Failed to fetch class averages.",
+    });
+  }
+};
+
+/* =========================================================
+   GET CLASS RANKING
+========================================================= */
+
+export const getClassRanking = async (req, res) => {
+  try {
+    const {
+      schoolClass,
+      academicSession,
+      academicTerm,
+    } = req.query;
+
+    if (!schoolClass || !academicSession || !academicTerm) {
+      return res.status(400).json({
+        message:
+          "schoolClass, academicSession and academicTerm are required.",
       });
     }
+
+    const rankings = await Result.aggregate([
+      {
+        $match: {
+          school: req.user.school,
+          schoolClass,
+          academicSession,
+          academicTerm,
+          status: {
+            $in: ["published", "locked"],
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$student",
+          totalScore: {
+            $sum: "$total",
+          },
+          subjectCount: {
+            $sum: 1,
+          },
+        },
+      },
+      {
+        $project: {
+          student: "$_id",
+          totalScore: 1,
+          subjectCount: 1,
+          averageScore: {
+            $divide: ["$totalScore", "$subjectCount"],
+          },
+        },
+      },
+      {
+        $sort: {
+          averageScore: -1,
+          totalScore: -1,
+        },
+      },
+    ]);
+
+    const ranked = rankings.map((item, index) => ({
+      rank: index + 1,
+      ...item,
+    }));
+
+    return res.status(200).json({
+      rankings: ranked,
+    });
+  } catch (error) {
+    console.error("Get class ranking error:", error);
+
+    return res.status(500).json({
+      message: error.message || "Failed to fetch class ranking.",
+    });
+  }
+};
+
+/* =========================================================
+   GET STUDENT REPORT
+========================================================= */
+
+export const getStudentReport = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+
+    const student = await Student.findOne({
+      _id: studentId,
+      school: req.user.school,
+      isActive: true,
+    }).populate("user", "firstName lastName email");
+
+    if (!student) {
+      return res.status(404).json({
+        message: "Student not found.",
+      });
+    }
+
+    const results = await Result.find({
+      school: req.user.school,
+      student: studentId,
+      status: {
+        $in: ["published", "locked"],
+      },
+    })
+      .populate("subject", "name code")
+      .populate("schoolClass", "name")
+      .populate("academicSession", "name")
+      .populate("academicTerm", "name")
+      .sort({
+        academicSession: -1,
+        academicTerm: -1,
+        subject: 1,
+      });
+
+    const subjects = results.map((result) => ({
+      resultId: result._id,
+
+      subject: result.subject,
+
+      assessmentScores: result.assessmentScores,
+
+      caScore: result.caScore,
+      examScore: result.examScore,
+      total: result.total,
+
+      grade: result.grade,
+      remark: result.remark,
+
+      gradingSystem: result.gradingSystem,
+
+      status: result.status,
+    }));
 
     const totalScore = results.reduce(
       (sum, result) => sum + result.total,
       0
     );
 
-    const overallAverage = Number(
-      (totalScore / results.length).toFixed(2)
-    );
+    const averageScore =
+      results.length > 0
+        ? totalScore / results.length
+        : 0;
 
-    const uniqueStudents = new Set(
-      results.map((result) => String(result.student._id))
-    );
+    const school = await School.findById(req.user.school);
 
-    const subjectMap = new Map();
+    let overallGrade = null;
+    let overallRemark = null;
 
-    for (const result of results) {
-      const subjectId = String(result.subject._id);
+    if (school?.gradingSystem?.gradingScale?.length) {
+      const gradingRule = school.gradingSystem.gradingScale.find(
+        (rule) =>
+          averageScore >= Number(rule.min) &&
+          averageScore <= Number(rule.max)
+      );
 
-      if (!subjectMap.has(subjectId)) {
-        subjectMap.set(subjectId, {
-          subject: result.subject,
-          totalScore: 0,
-          resultCount: 0,
-          highestScore: result.total,
-          lowestScore: result.total,
-        });
-      }
-
-      const subjectData = subjectMap.get(subjectId);
-
-      subjectData.totalScore += result.total;
-      subjectData.resultCount += 1;
-
-      if (result.total > subjectData.highestScore) {
-        subjectData.highestScore = result.total;
-      }
-
-      if (result.total < subjectData.lowestScore) {
-        subjectData.lowestScore = result.total;
+      if (gradingRule) {
+        overallGrade = gradingRule.grade;
+        overallRemark = gradingRule.remark;
       }
     }
 
-    const subjects = Array.from(subjectMap.values())
-      .map((subjectData) => ({
-        subject: subjectData.subject,
-        studentCount: subjectData.resultCount,
-        averageScore: Number(
-          (subjectData.totalScore / subjectData.resultCount).toFixed(2)
-        ),
-        highestScore: subjectData.highestScore,
-        lowestScore: subjectData.lowestScore,
-      }))
-      .sort((a, b) =>
-        a.subject.name.localeCompare(b.subject.name)
-      );
-
     return res.status(200).json({
-      message: "Class analytics retrieved successfully.",
-      class: {
-        _id: classRecord._id,
-        name: classRecord.name,
-        arm: classRecord.arm,
-        section: classRecord.section,
-      },
-      academicSession: {
-        _id: sessionRecord._id,
-        name: sessionRecord.name,
-      },
-      academicTerm: {
-        _id: termRecord._id,
-        name: termRecord.name,
-      },
-      summary: {
-        totalStudents: uniqueStudents.size,
-        totalResults: results.length,
-        overallAverage,
-      },
+      student,
       subjects,
-    });
-  } catch (error) {
-    console.error("Get class averages error:", error);
-
-    return res.status(500).json({
-      message: "Server error while retrieving class analytics.",
-    });
-  }
-};
-
-// @desc    Get class ranking
-// @route   GET /api/results/analytics/class-rankings
-// @access  School Admin
-export const getClassRanking = async (req, res) => {
-  try {
-    const { schoolClass, academicSession, academicTerm } = req.query;
-
-    if (req.user.role !== "schoolAdmin") {
-      return res.status(403).json({
-        message: "Only school admins can access class rankings.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "School admin is not associated with a school.",
-      });
-    }
-
-    const school = await School.findById(req.user.school);
-
-    if (!school) {
-      return res.status(404).json({
-        message: "School not found.",
-      });
-    }
-
-    if (!school.isActive) {
-      return res.status(403).json({
-        message: "School is inactive.",
-      });
-    }
-
-    if (school.enableClassRanking !== true) {
-      return res.status(403).json({
-        message: "Class ranking is disabled for this school.",
-        enableClassRanking: school.enableClassRanking,
-      });
-    }
-
-    if (!schoolClass || !academicSession || !academicTerm) {
-      return res.status(400).json({
-        message:
-          "schoolClass, academicSession, and academicTerm are required.",
-      });
-    }
-
-    const classRecord = await SchoolClass.findOne({
-      _id: schoolClass,
-      school: req.user.school,
-    });
-
-    if (!classRecord) {
-      return res.status(404).json({
-        message: "Class not found in your school.",
-      });
-    }
-
-    const sessionRecord = await AcademicSession.findOne({
-      _id: academicSession,
-      school: req.user.school,
-    });
-
-    if (!sessionRecord) {
-      return res.status(404).json({
-        message: "Academic session not found in your school.",
-      });
-    }
-
-    const termRecord = await AcademicTerm.findOne({
-      _id: academicTerm,
-      school: req.user.school,
-      academicSession,
-    });
-
-    if (!termRecord) {
-      return res.status(404).json({
-        message: "Academic term not found for this school/session.",
-      });
-    }
-
-    const results = await Result.find({
-      school: req.user.school,
-      schoolClass,
-      academicSession,
-      academicTerm,
-      status: {
-        $in: ["published", "locked"],
-      },
-    })
-      .populate(
-        "student",
-        "studentId firstName middleName lastName"
-      )
-      .populate("subject", "name code")
-      .sort({ student: 1 });
-
-    if (results.length === 0) {
-      return res.status(200).json({
-        message: "No published or locked results found for this class.",
-        class: {
-          _id: classRecord._id,
-          name: classRecord.name,
-          arm: classRecord.arm,
-          section: classRecord.section,
-        },
-        academicSession: {
-          _id: sessionRecord._id,
-          name: sessionRecord.name,
-        },
-        academicTerm: {
-          _id: termRecord._id,
-          name: termRecord.name,
-        },
-        summary: {
-          totalStudents: 0,
-        },
-        rankings: [],
-      });
-    }
-
-    const studentMap = new Map();
-
-    for (const result of results) {
-      if (!result.student) {
-        continue;
-      }
-
-      const studentId = String(result.student._id);
-
-      if (!studentMap.has(studentId)) {
-        studentMap.set(studentId, {
-          student: result.student,
-          totalScore: 0,
-          subjectCount: 0,
-        });
-      }
-
-      const studentData = studentMap.get(studentId);
-
-      studentData.totalScore += Number(result.total);
-      studentData.subjectCount += 1;
-    }
-
-    const rankings = Array.from(studentMap.values())
-      .filter((studentData) => studentData.subjectCount > 0)
-      .map((studentData) => {
-        const averageScore =
-          studentData.totalScore / studentData.subjectCount;
-
-        return {
-          student: studentData.student,
-          totalScore: Number(
-            studentData.totalScore.toFixed(2)
-          ),
-          subjectCount: studentData.subjectCount,
-          averageScore: Number(averageScore.toFixed(2)),
-        };
-      });
-
-    rankings.sort((a, b) => {
-      if (b.averageScore !== a.averageScore) {
-        return b.averageScore - a.averageScore;
-      }
-
-      const aName =
-        `${a.student.firstName || ""} ${
-          a.student.lastName || ""
-        }`
-          .trim()
-          .toLowerCase();
-
-      const bName =
-        `${b.student.firstName || ""} ${
-          b.student.lastName || ""
-        }`
-          .trim()
-          .toLowerCase();
-
-      return aName.localeCompare(bName);
-    });
-
-    let previousAverage = null;
-    let previousPosition = 0;
-
-    rankings.forEach((ranking, index) => {
-      if (ranking.averageScore === previousAverage) {
-        ranking.position = previousPosition;
-      } else {
-        ranking.position = index + 1;
-      }
-
-      previousAverage = ranking.averageScore;
-      previousPosition = ranking.position;
-    });
-
-    return res.status(200).json({
-      message: "Class rankings retrieved successfully.",
-      class: {
-        _id: classRecord._id,
-        name: classRecord.name,
-        arm: classRecord.arm,
-        section: classRecord.section,
-      },
-      academicSession: {
-        _id: sessionRecord._id,
-        name: sessionRecord.name,
-      },
-      academicTerm: {
-        _id: termRecord._id,
-        name: termRecord.name,
-      },
       summary: {
-        totalStudents: rankings.length,
-      },
-      rankings,
-    });
-  } catch (error) {
-    console.error("Get class ranking error:", error);
-
-    return res.status(500).json({
-      message: "Server error while retrieving class rankings.",
-    });
-  }
-};
-
-// @desc    Get a student's complete term report
-// @route   GET /api/results/student-report
-// @access  School Admin
-export const getStudentReport = async (req, res) => {
-  try {
-    const {
-      student,
-      schoolClass,
-      academicSession,
-      academicTerm,
-    } = req.query;
-
-    if (req.user.role !== "schoolAdmin") {
-      return res.status(403).json({
-        message: "Only school admins can access student reports.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "School admin is not associated with a school.",
-      });
-    }
-
-    if (
-      !student ||
-      !schoolClass ||
-      !academicSession ||
-      !academicTerm
-    ) {
-      return res.status(400).json({
-        message:
-          "student, schoolClass, academicSession, and academicTerm are required.",
-      });
-    }
-
-    const school = await School.findById(req.user.school);
-
-    if (!school) {
-      return res.status(404).json({
-        message: "School not found.",
-      });
-    }
-
-    if (!school.isActive) {
-      return res.status(403).json({
-        message: "School is inactive.",
-      });
-    }
-
-    const studentRecord = await Student.findOne({
-      _id: student,
-      school: req.user.school,
-    });
-
-    if (!studentRecord) {
-      return res.status(404).json({
-        message: "Student not found in your school.",
-      });
-    }
-
-    const classRecord = await SchoolClass.findOne({
-      _id: schoolClass,
-      school: req.user.school,
-    });
-
-    if (!classRecord) {
-      return res.status(404).json({
-        message: "Class not found in your school.",
-      });
-    }
-
-    if (String(studentRecord.schoolClass) !== String(schoolClass)) {
-      return res.status(400).json({
-        message: "Student does not belong to the selected class.",
-      });
-    }
-
-    const sessionRecord = await AcademicSession.findOne({
-      _id: academicSession,
-      school: req.user.school,
-    });
-
-    if (!sessionRecord) {
-      return res.status(404).json({
-        message: "Academic session not found in your school.",
-      });
-    }
-
-    const termRecord = await AcademicTerm.findOne({
-      _id: academicTerm,
-      school: req.user.school,
-      academicSession,
-    });
-
-    if (!termRecord) {
-      return res.status(404).json({
-        message: "Academic term not found for this school/session.",
-      });
-    }
-
-    const subjectAssignments = await SubjectAssignment.find({
-      school: req.user.school,
-      schoolClass,
-      academicSession,
-      isActive: true,
-    }).populate("subject", "name code");
-
-    const subjectMap = new Map();
-
-    for (const assignment of subjectAssignments) {
-      if (assignment.subject?._id) {
-        subjectMap.set(
-          String(assignment.subject._id),
-          assignment.subject
-        );
-      }
-    }
-
-    const assignedSubjects = Array.from(subjectMap.values());
-
-    const expectedSubjectCount = assignedSubjects.length;
-
-    const results = await Result.find({
-      school: req.user.school,
-      student,
-      schoolClass,
-      academicSession,
-      academicTerm,
-      status: {
-        $in: ["published", "locked"],
-      },
-    })
-      .populate("subject", "name code")
-      .sort({ "subject.name": 1 });
-
-    const resultSubjectIds = new Set(
-      results.map((result) => String(result.subject?._id))
-    );
-
-    const completedSubjectCount = results.length;
-
-    const missingSubjects = assignedSubjects
-      .filter(
-        (subject) =>
-          !resultSubjectIds.has(String(subject._id))
-      )
-      .map((subject) => ({
-        _id: subject._id,
-        name: subject.name,
-        code: subject.code,
-      }));
-
-    const isComplete =
-      expectedSubjectCount > 0 &&
-      completedSubjectCount >= expectedSubjectCount &&
-      missingSubjects.length === 0;
-
-    if (results.length === 0) {
-      return res.status(200).json({
-        message: "No published or locked results found for this student.",
-
-        school: {
-          _id: school._id,
-          name: school.name,
-          email: school.email,
-          phone: school.phone,
-          address: school.address,
-          city: school.city,
-          state: school.state,
-          country: school.country,
-          logo: school.logo,
-        },
-
-        student: {
-          _id: studentRecord._id,
-          studentId: studentRecord.studentId,
-          firstName: studentRecord.firstName,
-          middleName: studentRecord.middleName,
-          lastName: studentRecord.lastName,
-        },
-
-        class: {
-          _id: classRecord._id,
-          name: classRecord.name,
-          arm: classRecord.arm,
-          section: classRecord.section,
-        },
-
-        academicSession: {
-          _id: sessionRecord._id,
-          name: sessionRecord.name,
-        },
-
-        academicTerm: {
-          _id: termRecord._id,
-          name: termRecord.name,
-        },
-
-        summary: {
-          totalSubjects: 0,
-          expectedSubjects: expectedSubjectCount,
-          completedSubjects: 0,
-          totalScore: 0,
-          averageScore: 0,
-          overallGrade: null,
-          overallRemark: null,
-          isComplete: false,
-        },
-
-        ranking: {
-          enabled: school.enableClassRanking === true,
-          position: null,
-          totalStudents: 0,
-          rankedStudents: 0,
-          eligible: false,
-        },
-
-        position: null,
-
-        missingSubjects,
-
-        subjects: [],
-      });
-    }
-
-    const totalScore = results.reduce(
-      (sum, result) => sum + Number(result.total),
-      0
-    );
-
-    const totalSubjects = results.length;
-
-    const averageScore = Number(
-      (totalScore / totalSubjects).toFixed(2)
-    );
-
-    const overallGradeRule =
-      school.gradingSystem?.gradingScale?.find(
-        (scale) =>
-          averageScore >= Number(scale.min) &&
-          averageScore <= Number(scale.max)
-      );
-
-    const overallGrade = overallGradeRule?.grade || null;
-    const overallRemark = overallGradeRule?.remark || null;
-
-    const subjects = results.map((result) => ({
-      resultId: result._id,
-      subject: result.subject,
-      caScore: result.caScore,
-      examScore: result.examScore,
-      total: result.total,
-      grade: result.grade,
-      remark: result.remark,
-      status: result.status,
-    }));
-
-    const activeStudents = await Student.find({
-      school: req.user.school,
-      schoolClass,
-      isActive: true,
-    }).select("_id");
-
-    const totalStudents = activeStudents.length;
-
-    let position = null;
-    let rankedStudents = 0;
-    let rankingEligible = false;
-
-    if (
-      school.enableClassRanking === true &&
-      expectedSubjectCount > 0
-    ) {
-      const classResults = await Result.find({
-        school: req.user.school,
-        schoolClass,
-        academicSession,
-        academicTerm,
-        status: {
-          $in: ["published", "locked"],
-        },
-      }).select("student subject total");
-
-      const studentResultsMap = new Map();
-
-      for (const result of classResults) {
-        const studentId = String(result.student);
-
-        if (!studentResultsMap.has(studentId)) {
-          studentResultsMap.set(studentId, {
-            subjects: new Set(),
-            totalScore: 0,
-          });
-        }
-
-        const studentData =
-          studentResultsMap.get(studentId);
-
-        studentData.subjects.add(String(result.subject));
-        studentData.totalScore += Number(result.total);
-      }
-
-      const eligibleRankings = [];
-
-      for (const [studentId, data] of studentResultsMap.entries()) {
-        if (data.subjects.size !== expectedSubjectCount) {
-          continue;
-        }
-
-        let hasAllSubjects = true;
-
-        for (const subject of assignedSubjects) {
-          if (!data.subjects.has(String(subject._id))) {
-            hasAllSubjects = false;
-            break;
-          }
-        }
-
-        if (!hasAllSubjects) {
-          continue;
-        }
-
-        const average =
-          data.totalScore / expectedSubjectCount;
-
-        eligibleRankings.push({
-          studentId,
-          totalScore: data.totalScore,
-          averageScore: average,
-        });
-      }
-
-      eligibleRankings.sort((a, b) => {
-        if (b.averageScore !== a.averageScore) {
-          return b.averageScore - a.averageScore;
-        }
-
-        return String(a.studentId).localeCompare(
-          String(b.studentId)
-        );
-      });
-
-      let previousAverage = null;
-      let previousPosition = 0;
-
-      eligibleRankings.forEach((ranking, index) => {
-        const roundedAverage = Number(
-          ranking.averageScore.toFixed(2)
-        );
-
-        if (roundedAverage === previousAverage) {
-          ranking.position = previousPosition;
-        } else {
-          ranking.position = index + 1;
-        }
-
-        ranking.averageScore = roundedAverage;
-
-        previousAverage = roundedAverage;
-        previousPosition = ranking.position;
-      });
-
-      rankedStudents = eligibleRankings.length;
-
-      const studentRanking = eligibleRankings.find(
-        (ranking) =>
-          ranking.studentId === String(student)
-      );
-
-      if (studentRanking) {
-        position = studentRanking.position;
-        rankingEligible = true;
-      }
-    }
-
-    return res.status(200).json({
-      message: "Student report retrieved successfully.",
-
-      school: {
-        _id: school._id,
-        name: school.name,
-        email: school.email,
-        phone: school.phone,
-        address: school.address,
-        city: school.city,
-        state: school.state,
-        country: school.country,
-        logo: school.logo,
-      },
-
-      student: {
-        _id: studentRecord._id,
-        studentId: studentRecord.studentId,
-        firstName: studentRecord.firstName,
-        middleName: studentRecord.middleName,
-        lastName: studentRecord.lastName,
-      },
-
-      class: {
-        _id: classRecord._id,
-        name: classRecord.name,
-        arm: classRecord.arm,
-        section: classRecord.section,
-      },
-
-      academicSession: {
-        _id: sessionRecord._id,
-        name: sessionRecord.name,
-      },
-
-      academicTerm: {
-        _id: termRecord._id,
-        name: termRecord.name,
-      },
-
-      summary: {
-        totalSubjects,
-        expectedSubjects: expectedSubjectCount,
-        completedSubjects: completedSubjectCount,
+        totalSubjects: results.length,
         totalScore,
         averageScore,
         overallGrade,
         overallRemark,
-        isComplete,
       },
-
-      ranking: {
-        enabled: school.enableClassRanking === true,
-        position,
-        totalStudents,
-        rankedStudents,
-        eligible: rankingEligible,
-      },
-
-      position,
-
-      missingSubjects,
-
-      subjects,
     });
   } catch (error) {
     console.error("Get student report error:", error);
 
     return res.status(500).json({
-      message: "Server error while retrieving student report.",
+      message: error.message || "Failed to fetch student report.",
     });
   }
 };
 
-// @desc    Get results entered by the logged-in teacher
-// @route   GET /api/results/teacher-results
-// @access  Teacher
+/* =========================================================
+   GET TEACHER RESULTS
+========================================================= */
+
 export const getTeacherResults = async (req, res) => {
   try {
     const {
@@ -1823,188 +1017,44 @@ export const getTeacherResults = async (req, res) => {
       subject,
       academicSession,
       academicTerm,
-      status,
     } = req.query;
 
-    if (req.user.role !== "teacher") {
-      return res.status(403).json({
-        message: "Only teachers can access teacher results.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "Teacher is not associated with a school.",
-      });
-    }
-
-    if (
-      !schoolClass ||
-      !subject ||
-      !academicSession ||
-      !academicTerm
-    ) {
-      return res.status(400).json({
-        message:
-          "schoolClass, subject, academicSession, and academicTerm are required.",
-      });
-    }
-
-    const school = await School.findById(req.user.school);
-
-    if (!school) {
-      return res.status(404).json({
-        message: "School not found.",
-      });
-    }
-
-    if (!school.isActive) {
-      return res.status(403).json({
-        message: "School is inactive.",
-      });
-    }
-
-    const classRecord = await SchoolClass.findOne({
-      _id: schoolClass,
-      school: req.user.school,
-    });
-
-    if (!classRecord) {
-      return res.status(404).json({
-        message: "Class not found in your school.",
-      });
-    }
-
-    const subjectRecord = await Subject.findOne({
-      _id: subject,
-      school: req.user.school,
-    });
-
-    if (!subjectRecord) {
-      return res.status(404).json({
-        message: "Subject not found in your school.",
-      });
-    }
-
-    const sessionRecord = await AcademicSession.findOne({
-      _id: academicSession,
-      school: req.user.school,
-    });
-
-    if (!sessionRecord) {
-      return res.status(404).json({
-        message: "Academic session not found in your school.",
-      });
-    }
-
-    const termRecord = await AcademicTerm.findOne({
-      _id: academicTerm,
-      school: req.user.school,
-      academicSession,
-    });
-
-    if (!termRecord) {
-      return res.status(404).json({
-        message: "Academic term not found for this school/session.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Verify teacher assignment
-    // --------------------------------------------------
-
-    const subjectAssignment =
-      await verifyTeacherSubjectAssignment({
-        teacherId: req.user._id,
-        schoolId: req.user.school,
-        schoolClass,
-        subject,
-        academicSession,
-      });
-
-    if (!subjectAssignment) {
-      return res.status(403).json({
-        message:
-          "You are not assigned to teach this subject for this class and academic session.",
-      });
-    }
-
-    const query = {
+    const filter = {
       school: req.user.school,
       enteredBy: req.user._id,
-      schoolClass,
-      subject,
-      academicSession,
-      academicTerm,
     };
 
-    if (status) {
-      const allowedStatuses = [
-        "draft",
-        "pending_review",
-        "published",
-        "locked",
-      ];
+    if (schoolClass) filter.schoolClass = schoolClass;
+    if (subject) filter.subject = subject;
+    if (academicSession) filter.academicSession = academicSession;
+    if (academicTerm) filter.academicTerm = academicTerm;
 
-      if (!allowedStatuses.includes(status)) {
-        return res.status(400).json({
-          message:
-            "Invalid status. Allowed values are draft, pending_review, published, and locked.",
-        });
-      }
-
-      query.status = status;
-    }
-
-    const results = await Result.find(query)
-      .populate("student", "studentId firstName middleName lastName")
+    const results = await Result.find(filter)
+      .populate("student", "studentId admissionNumber")
+      .populate("schoolClass", "name")
       .populate("subject", "name code")
-      .populate("schoolClass", "name arm section")
       .populate("academicSession", "name")
       .populate("academicTerm", "name")
       .sort({
-        "student.lastName": 1,
-        "student.firstName": 1,
+        createdAt: -1,
       });
 
     return res.status(200).json({
-      message: "Teacher results retrieved successfully.",
-      class: {
-        _id: classRecord._id,
-        name: classRecord.name,
-        arm: classRecord.arm,
-        section: classRecord.section,
-      },
-      subject: {
-        _id: subjectRecord._id,
-        name: subjectRecord.name,
-        code: subjectRecord.code,
-      },
-      academicSession: {
-        _id: sessionRecord._id,
-        name: sessionRecord.name,
-      },
-      academicTerm: {
-        _id: termRecord._id,
-        name: termRecord.name,
-      },
-      summary: {
-        totalResults: results.length,
-      },
       results,
     });
   } catch (error) {
     console.error("Get teacher results error:", error);
 
     return res.status(500).json({
-      message: "Server error while retrieving teacher results.",
+      message: error.message || "Failed to fetch teacher results.",
     });
   }
 };
 
-// @desc    Get students in a class for teacher result entry
-// @route   GET /api/results/teacher-roster
-// @access  Teacher
+/* =========================================================
+   GET TEACHER ROSTER
+========================================================= */
+
 export const getTeacherRoster = async (req, res) => {
   try {
     const {
@@ -2014,18 +1064,6 @@ export const getTeacherRoster = async (req, res) => {
       academicTerm,
     } = req.query;
 
-    if (req.user.role !== "teacher") {
-      return res.status(403).json({
-        message: "Only teachers can access the result roster.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "Teacher is not associated with a school.",
-      });
-    }
-
     if (
       !schoolClass ||
       !subject ||
@@ -2034,7 +1072,7 @@ export const getTeacherRoster = async (req, res) => {
     ) {
       return res.status(400).json({
         message:
-          "schoolClass, subject, academicSession, and academicTerm are required.",
+          "schoolClass, subject, academicSession and academicTerm are required.",
       });
     }
 
@@ -2046,74 +1084,20 @@ export const getTeacherRoster = async (req, res) => {
       });
     }
 
-    if (!school.isActive) {
-      return res.status(403).json({
-        message: "School is inactive.",
-      });
-    }
+    const gradingSystem = getConfiguredGradingSystem(school);
 
-    const classRecord = await SchoolClass.findOne({
-      _id: schoolClass,
-      school: req.user.school,
-    });
-
-    if (!classRecord) {
-      return res.status(404).json({
-        message: "Class not found in your school.",
-      });
-    }
-
-    const subjectRecord = await Subject.findOne({
-      _id: subject,
-      school: req.user.school,
-    });
-
-    if (!subjectRecord) {
-      return res.status(404).json({
-        message: "Subject not found in your school.",
-      });
-    }
-
-    const sessionRecord = await AcademicSession.findOne({
-      _id: academicSession,
-      school: req.user.school,
-    });
-
-    if (!sessionRecord) {
-      return res.status(404).json({
-        message: "Academic session not found in your school.",
-      });
-    }
-
-    const termRecord = await AcademicTerm.findOne({
-      _id: academicTerm,
-      school: req.user.school,
+    const assignment = await verifyTeacherSubjectAssignment({
+      teacherId: req.user._id,
+      schoolId: req.user.school,
+      schoolClass,
+      subject,
       academicSession,
     });
 
-    if (!termRecord) {
-      return res.status(404).json({
-        message: "Academic term not found for this school/session.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Verify teacher assignment
-    // --------------------------------------------------
-
-    const subjectAssignment =
-      await verifyTeacherSubjectAssignment({
-        teacherId: req.user._id,
-        schoolId: req.user.school,
-        schoolClass,
-        subject,
-        academicSession,
-      });
-
-    if (!subjectAssignment) {
+    if (!assignment) {
       return res.status(403).json({
         message:
-          "You are not assigned to teach this subject for this class and academic session.",
+          "You are not assigned to this subject for this class and academic session.",
       });
     }
 
@@ -2122,45 +1106,51 @@ export const getTeacherRoster = async (req, res) => {
       schoolClass,
       isActive: true,
     })
-      .select("studentId firstName middleName lastName")
+      .populate("user", "firstName lastName email")
       .sort({
-        lastName: 1,
-        firstName: 1,
+        "user.firstName": 1,
+        "user.lastName": 1,
       });
+
+    const studentIds = students.map((student) => student._id);
 
     const results = await Result.find({
       school: req.user.school,
+      student: {
+        $in: studentIds,
+      },
       schoolClass,
       subject,
       academicSession,
       academicTerm,
     }).select(
-      "student caScore examScore total grade remark status _id"
+      "_id student assessmentScores caScore examScore total grade remark status"
     );
 
-    const resultMap = new Map();
-
-    for (const result of results) {
-      resultMap.set(String(result.student), result);
-    }
+    const resultMap = new Map(
+      results.map((result) => [
+        result.student.toString(),
+        result,
+      ])
+    );
 
     const roster = students.map((student) => {
-      const result = resultMap.get(String(student._id));
+      const result = resultMap.get(student._id.toString());
 
       return {
         student: {
           _id: student._id,
           studentId: student.studentId,
-          firstName: student.firstName,
-          middleName: student.middleName,
-          lastName: student.lastName,
+          admissionNumber: student.admissionNumber,
+          firstName: student.user?.firstName || "",
+          lastName: student.user?.lastName || "",
+          email: student.user?.email || "",
         },
-
-        hasResult: Boolean(result),
 
         result: result
           ? {
-              resultId: result._id,
+              _id: result._id,
+              assessmentScores: result.assessmentScores,
               caScore: result.caScore,
               examScore: result.examScore,
               total: result.total,
@@ -2172,43 +1162,15 @@ export const getTeacherRoster = async (req, res) => {
       };
     });
 
-    const studentsWithResults = roster.filter(
-      (item) => item.hasResult
-    ).length;
-
-    const studentsWithoutResults =
-      roster.length - studentsWithResults;
-
     return res.status(200).json({
-      message: "Teacher result roster retrieved successfully.",
+      gradingSystem: {
+        caMaximum: gradingSystem.caMaximum,
+        examMaximum: gradingSystem.examMaximum,
+        totalMaximum: gradingSystem.totalMaximum,
 
-      class: {
-        _id: classRecord._id,
-        name: classRecord.name,
-        arm: classRecord.arm,
-        section: classRecord.section,
-      },
+        caComponents: gradingSystem.caComponents,
 
-      subject: {
-        _id: subjectRecord._id,
-        name: subjectRecord.name,
-        code: subjectRecord.code,
-      },
-
-      academicSession: {
-        _id: sessionRecord._id,
-        name: sessionRecord.name,
-      },
-
-      academicTerm: {
-        _id: termRecord._id,
-        name: termRecord.name,
-      },
-
-      summary: {
-        totalStudents: roster.length,
-        studentsWithResults,
-        studentsWithoutResults,
+        gradingScale: gradingSystem.gradingScale,
       },
 
       roster,
@@ -2217,14 +1179,15 @@ export const getTeacherRoster = async (req, res) => {
     console.error("Get teacher roster error:", error);
 
     return res.status(500).json({
-      message: "Server error while retrieving teacher result roster.",
+      message: error.message || "Failed to fetch teacher roster.",
     });
   }
 };
 
-// @desc    Submit all teacher results for a class/subject/term
-// @route   POST /api/results/teacher-results/submit
-// @access  Teacher
+/* =========================================================
+   SUBMIT TEACHER RESULTS
+========================================================= */
+
 export const submitTeacherResults = async (req, res) => {
   try {
     const {
@@ -2232,19 +1195,8 @@ export const submitTeacherResults = async (req, res) => {
       subject,
       academicSession,
       academicTerm,
+      results,
     } = req.body;
-
-    if (req.user.role !== "teacher") {
-      return res.status(403).json({
-        message: "Only teachers can submit results.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "Teacher is not associated with a school.",
-      });
-    }
 
     if (
       !schoolClass ||
@@ -2254,7 +1206,13 @@ export const submitTeacherResults = async (req, res) => {
     ) {
       return res.status(400).json({
         message:
-          "schoolClass, subject, academicSession, and academicTerm are required.",
+          "schoolClass, subject, academicSession and academicTerm are required.",
+      });
+    }
+
+    if (!Array.isArray(results) || results.length === 0) {
+      return res.status(400).json({
+        message: "Results must be a non-empty array.",
       });
     }
 
@@ -2266,31 +1224,20 @@ export const submitTeacherResults = async (req, res) => {
       });
     }
 
-    if (!school.isActive) {
+    const gradingSystem = getConfiguredGradingSystem(school);
+
+    const assignment = await verifyTeacherSubjectAssignment({
+      teacherId: req.user._id,
+      schoolId: req.user.school,
+      schoolClass,
+      subject,
+      academicSession,
+    });
+
+    if (!assignment) {
       return res.status(403).json({
-        message: "School is inactive.",
-      });
-    }
-
-    const classRecord = await SchoolClass.findOne({
-      _id: schoolClass,
-      school: req.user.school,
-    });
-
-    if (!classRecord) {
-      return res.status(404).json({
-        message: "Class not found in your school.",
-      });
-    }
-
-    const subjectRecord = await Subject.findOne({
-      _id: subject,
-      school: req.user.school,
-    });
-
-    if (!subjectRecord) {
-      return res.status(404).json({
-        message: "Subject not found in your school.",
+        message:
+          "You are not assigned to this subject for this class and academic session.",
       });
     }
 
@@ -2301,378 +1248,204 @@ export const submitTeacherResults = async (req, res) => {
 
     if (!sessionRecord) {
       return res.status(404).json({
-        message: "Academic session not found in your school.",
+        message: "Academic session not found.",
       });
     }
 
     const termRecord = await AcademicTerm.findOne({
       _id: academicTerm,
       school: req.user.school,
-      academicSession,
     });
 
     if (!termRecord) {
       return res.status(404).json({
-        message: "Academic term not found for this school/session.",
+        message: "Academic term not found.",
       });
     }
 
-    // --------------------------------------------------
-    // Verify teacher assignment
-    // --------------------------------------------------
-
-    const subjectAssignment =
-      await verifyTeacherSubjectAssignment({
-        teacherId: req.user._id,
-        schoolId: req.user.school,
-        schoolClass,
-        subject,
-        academicSession,
-      });
-
-    if (!subjectAssignment) {
-      return res.status(403).json({
-        message:
-          "You are not assigned to teach this subject for this class and academic session.",
-      });
-    }
-
-    // --------------------------------------------------
-    // Get every active student in the class
-    // --------------------------------------------------
+    const studentIds = results.map((item) => item.student);
 
     const students = await Student.find({
+      _id: {
+        $in: studentIds,
+      },
       school: req.user.school,
       schoolClass,
       isActive: true,
-    }).select("_id studentId firstName middleName lastName");
+    });
 
-    if (students.length === 0) {
+    if (students.length !== studentIds.length) {
       return res.status(400).json({
-        message: "There are no active students in this class.",
+        message:
+          "One or more students do not belong to this class.",
       });
     }
 
-    // --------------------------------------------------
-    // Only look at results entered by this teacher
-    // --------------------------------------------------
-
-    const results = await Result.find({
+    const existingResults = await Result.find({
       school: req.user.school,
-      enteredBy: req.user._id,
-      schoolClass,
+      student: {
+        $in: studentIds,
+      },
       subject,
       academicSession,
       academicTerm,
     }).select(
-      "_id student caScore examScore total grade remark status"
+      "_id student assessmentScores caScore examScore total grade remark status"
     );
 
-    const resultMap = new Map();
+    const existingResultMap = new Map(
+      existingResults.map((result) => [
+        result.student.toString(),
+        result,
+      ])
+    );
 
-    for (const result of results) {
-      resultMap.set(String(result.student), result);
-    }
+    const createdResults = [];
+    const updatedResults = [];
 
-    const missingStudents = [];
-
-    for (const student of students) {
-      if (!resultMap.has(String(student._id))) {
-        missingStudents.push({
-          _id: student._id,
-          studentId: student.studentId,
-          firstName: student.firstName,
-          middleName: student.middleName,
-          lastName: student.lastName,
+    for (const item of results) {
+      if (!item.student) {
+        return res.status(400).json({
+          message: "Every result must contain a student.",
         });
       }
-    }
 
-    // --------------------------------------------------
-    // Every active student must have a result
-    // --------------------------------------------------
-
-    if (missingStudents.length > 0) {
-      return res.status(400).json({
-        message:
-          "Results cannot be submitted because some students are missing results.",
-        summary: {
-          totalStudents: students.length,
-          resultsEntered: results.length,
-          studentsMissingResults: missingStudents.length,
-        },
-        missingStudents,
+      const calculated = calculateResultScores({
+        assessmentScores: item.assessmentScores,
+        examScore: item.examScore,
+        gradingSystem,
       });
-    }
 
-    // --------------------------------------------------
-    // Prevent resubmitting locked results
-    // --------------------------------------------------
-
-    const lockedResults = results.filter(
-      (result) => result.status === "locked"
-    );
-
-    if (lockedResults.length > 0) {
-      return res.status(400).json({
-        message:
-          "Some results are already locked and cannot be submitted again.",
-        lockedResults: lockedResults.map((result) => ({
-          resultId: result._id,
-          student: result.student,
-        })),
-      });
-    }
-
-    // --------------------------------------------------
-    // Prevent resubmitting published results
-    // --------------------------------------------------
-
-    const publishedResults = results.filter(
-      (result) => result.status === "published"
-    );
-
-    if (publishedResults.length > 0) {
-      return res.status(400).json({
-        message:
-          "Some results have already been published and cannot be submitted again.",
-        publishedResults: publishedResults.map((result) => ({
-          resultId: result._id,
-          student: result.student,
-        })),
-      });
-    }
-
-    // --------------------------------------------------
-    // Only draft results can be submitted
-    // --------------------------------------------------
-
-    const nonDraftResults = results.filter(
-      (result) => result.status !== "draft"
-    );
-
-    if (nonDraftResults.length > 0) {
-      return res.status(400).json({
-        message:
-          "All results must be in draft status before submitting the subject.",
-        invalidResults: nonDraftResults.map((result) => ({
-          resultId: result._id,
-          student: result.student,
-          status: result.status,
-        })),
-      });
-    }
-
-    const updateResult = await Result.updateMany(
-      {
-        school: req.user.school,
-        enteredBy: req.user._id,
-        schoolClass,
-        subject,
-        academicSession,
-        academicTerm,
-        status: "draft",
-      },
-      {
-        $set: {
-          status: "pending_review",
-        },
+      if (calculated.error) {
+        return res.status(400).json({
+          message: `Student ${item.student}: ${calculated.error}`,
+        });
       }
-    );
+
+      const existingResult = existingResultMap.get(
+        item.student.toString()
+      );
+
+      if (existingResult) {
+        if (existingResult.status !== "draft") {
+          return res.status(400).json({
+            message:
+              "Only draft results can be updated.",
+          });
+        }
+
+        existingResult.assessmentScores =
+          calculated.assessmentScores;
+
+        existingResult.caScore = calculated.caScore;
+        existingResult.examScore = calculated.examScore;
+        existingResult.total = calculated.total;
+        existingResult.grade = calculated.grade;
+        existingResult.remark = calculated.remark;
+
+        existingResult.gradingSystem =
+          buildGradingSystemSnapshot(gradingSystem);
+
+        await existingResult.save();
+
+        updatedResults.push(existingResult);
+      } else {
+        const newResult = await Result.create({
+          school: req.user.school,
+          student: item.student,
+          schoolClass,
+          subject,
+          academicSession,
+          academicTerm,
+
+          assessmentScores:
+            calculated.assessmentScores,
+
+          caScore: calculated.caScore,
+          examScore: calculated.examScore,
+          total: calculated.total,
+          grade: calculated.grade,
+          remark: calculated.remark,
+
+          gradingSystem:
+            buildGradingSystemSnapshot(gradingSystem),
+
+          status: "draft",
+          enteredBy: req.user._id,
+        });
+
+        createdResults.push(newResult);
+      }
+    }
 
     return res.status(200).json({
-      message: "Results submitted successfully for review.",
-      class: {
-        _id: classRecord._id,
-        name: classRecord.name,
-        arm: classRecord.arm,
-        section: classRecord.section,
-      },
-      subject: {
-        _id: subjectRecord._id,
-        name: subjectRecord.name,
-        code: subjectRecord.code,
-      },
-      academicSession: {
-        _id: sessionRecord._id,
-        name: sessionRecord.name,
-      },
-      academicTerm: {
-        _id: termRecord._id,
-        name: termRecord.name,
-      },
-      summary: {
-        totalStudents: students.length,
-        resultsSubmitted: updateResult.modifiedCount,
-        status: "pending_review",
-      },
+      message: "Teacher results saved successfully.",
+      created: createdResults,
+      updated: updatedResults,
     });
   } catch (error) {
     console.error("Submit teacher results error:", error);
 
     return res.status(500).json({
-      message: "Server error while submitting teacher results.",
+      message:
+        error.message || "Failed to save teacher results.",
     });
   }
 };
 
+/* =========================================================
+   GET ADMIN RESULTS
+========================================================= */
+
 export const getAdminResults = async (req, res) => {
   try {
-    if (req.user.role !== "schoolAdmin") {
-      return res.status(403).json({
-        message: "Only school admins can view admin results.",
-      });
-    }
-
-    if (!req.user.school) {
-      return res.status(403).json({
-        message: "User is not associated with a school.",
-      });
-    }
-
     const {
+      schoolClass,
+      subject,
       academicSession,
       academicTerm,
-      schoolClass,
       status,
     } = req.query;
 
-    const validStatuses = [
-      "draft",
-      "pending_review",
-      "published",
-      "locked",
-    ];
-
-    if (status && !validStatuses.includes(status)) {
-      return res.status(400).json({
-        message: "Invalid result status.",
-        validStatuses,
-      });
-    }
-
-    // Validate school class if provided
-    if (schoolClass) {
-      const classExists = await SchoolClass.findOne({
-        _id: schoolClass,
-        school: req.user.school,
-      });
-
-      if (!classExists) {
-        return res.status(404).json({
-          message: "School class not found.",
-        });
-      }
-    }
-
-    // Validate academic session if provided
-    if (academicSession) {
-      const sessionExists = await AcademicSession.findOne({
-        _id: academicSession,
-        school: req.user.school,
-      });
-
-      if (!sessionExists) {
-        return res.status(404).json({
-          message: "Academic session not found.",
-        });
-      }
-    }
-
-    // Validate academic term if provided
-    if (academicTerm) {
-      const termQuery = {
-        _id: academicTerm,
-        school: req.user.school,
-      };
-
-      if (academicSession) {
-        termQuery.academicSession = academicSession;
-      }
-
-      const termExists = await AcademicTerm.findOne(termQuery);
-
-      if (!termExists) {
-        return res.status(404).json({
-          message: "Academic term not found.",
-        });
-      }
-    }
-
-    const query = {
+    const filter = {
       school: req.user.school,
     };
 
+    if (schoolClass) filter.schoolClass = schoolClass;
+    if (subject) filter.subject = subject;
     if (academicSession) {
-      query.academicSession = academicSession;
+      filter.academicSession = academicSession;
     }
-
     if (academicTerm) {
-      query.academicTerm = academicTerm;
+      filter.academicTerm = academicTerm;
     }
+    if (status) filter.status = status;
 
-    if (schoolClass) {
-      query.schoolClass = schoolClass;
-    }
-
-    if (status) {
-      query.status = status;
-    }
-
-    const results = await Result.find(query)
+    const results = await Result.find(filter)
       .populate(
         "student",
-        "studentId firstName middleName lastName email"
+        "studentId admissionNumber user"
       )
-      .populate(
-        "schoolClass",
-        "name arm section"
-      )
-      .populate(
-        "subject",
-        "name code"
-      )
-      .populate(
-        "academicSession",
-        "name"
-      )
-      .populate(
-        "academicTerm",
-        "name"
-      )
+      .populate("schoolClass", "name")
+      .populate("subject", "name code")
+      .populate("academicSession", "name")
+      .populate("academicTerm", "name")
       .populate(
         "enteredBy",
-        "firstName middleName lastName email"
+        "firstName lastName email"
       )
-      .sort({ createdAt: -1 });
-
-    const summary = {
-      totalResults: results.length,
-      draft: results.filter(
-        (result) => result.status === "draft"
-      ).length,
-      pendingReview: results.filter(
-        (result) => result.status === "pending_review"
-      ).length,
-      published: results.filter(
-        (result) => result.status === "published"
-      ).length,
-      locked: results.filter(
-        (result) => result.status === "locked"
-      ).length,
-    };
+      .sort({
+        createdAt: -1,
+      });
 
     return res.status(200).json({
-      message: "Results retrieved successfully.",
-      summary,
       results,
     });
   } catch (error) {
     console.error("Get admin results error:", error);
 
     return res.status(500).json({
-      message: "Failed to retrieve results.",
-      error: error.message,
+      message: error.message || "Failed to fetch results.",
     });
   }
 };
