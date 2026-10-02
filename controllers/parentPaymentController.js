@@ -39,8 +39,6 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       });
     }
 
-    // Find the fee account and make sure it belongs
-    // to the parent's school.
     const feeAccount = await StudentFeeAccount.findOne({
       _id: studentFeeAccountId,
       school: schoolId,
@@ -53,8 +51,6 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       });
     }
 
-    // Verify that the student attached to this fee account
-    // actually belongs to the logged-in parent.
     const student = await Student.findOne({
       _id: feeAccount.student,
       school: schoolId,
@@ -70,7 +66,8 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
 
     if (feeAccount.balance <= 0 || feeAccount.status === "paid") {
       return res.status(400).json({
-        message: "This student's school fees have already been fully paid.",
+        message:
+          "This student's school fees have already been fully paid.",
       });
     }
 
@@ -80,8 +77,10 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       });
     }
 
-    // Prevent multiple pending Paystack payments for the
-    // same fee account.
+    /*
+     * Prevent multiple pending payments for the same
+     * student fee account.
+     */
     const existingPendingPayment = await Payment.findOne({
       school: schoolId,
       studentFeeAccount: feeAccount._id,
@@ -131,10 +130,24 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
     });
 
     try {
+      /*
+       * Build the frontend callback URL.
+       *
+       * Example:
+       * http://localhost:3000/dashboard/parent/children/123/fees/callback
+       */
+      const frontendUrl =
+        process.env.FRONTEND_URL ||
+        "http://localhost:3000";
+
+      const callbackUrl =
+        `${frontendUrl}/dashboard/parent/children/${student._id}/fees/callback`;
+
       const paystackResponse = await initializeTransaction({
         email: req.user.email,
         amount: Math.round(paymentAmount * 100),
         reference,
+        callbackUrl,
         metadata: {
           paymentId: payment._id.toString(),
           schoolId: schoolId.toString(),
@@ -146,25 +159,26 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       });
 
       return res.status(200).json({
-        message: "Parent school fee payment initialized successfully.",
+        message:
+          "Parent school fee payment initialized successfully.",
         payment: {
           id: payment._id,
           reference: payment.paymentReference,
           amount: payment.amount,
           status: payment.status,
         },
-        authorizationUrl: paystackResponse.authorization_url,
+        authorizationUrl:
+          paystackResponse.authorization_url,
         accessCode: paystackResponse.access_code,
       });
     } catch (paystackError) {
-      // If Paystack initialization fails, don't leave
-      // an unusable pending payment behind.
       payment.status = "failed";
 
       payment.metadata = {
         ...payment.metadata,
         initializationError:
-          paystackError?.message || "Paystack initialization failed.",
+          paystackError?.message ||
+          "Paystack initialization failed.",
       };
 
       await payment.save();

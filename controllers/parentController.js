@@ -359,6 +359,8 @@ export const getMyChildFees = async (req, res) => {
       feeFilter.status = status;
     }
 
+    
+
     const feeAccounts = await StudentFeeAccount.find(feeFilter)
       .populate(
         "feeStructure",
