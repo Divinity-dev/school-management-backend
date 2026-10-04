@@ -92,12 +92,283 @@ const bankDetailsSchema = new mongoose.Schema(
   }
 );
 
+/*
+|--------------------------------------------------------------------------
+| Public Website Settings
+|--------------------------------------------------------------------------
+*/
+
+const publicProfileSchema = new mongoose.Schema(
+  {
+    /*
+    |--------------------------------------------------------------------------
+    | Homepage / General
+    |--------------------------------------------------------------------------
+    */
+
+    tagline: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    description: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | About Us
+    |--------------------------------------------------------------------------
+    */
+
+    history: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    mission: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    vision: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    coreValues: {
+      type: [String],
+      default: [],
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Admissions
+    |--------------------------------------------------------------------------
+    */
+
+    admissions: {
+      enabled: {
+        type: Boolean,
+        default: true,
+      },
+
+      status: {
+        type: String,
+        trim: true,
+        default: "Admissions Now Open",
+      },
+
+      title: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      description: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      requirements: {
+        type: [String],
+        default: [],
+      },
+
+      applicationUrl: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+
+      applicationButtonText: {
+        type: String,
+        trim: true,
+        default: "Apply Now",
+      },
+
+      contactText: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Principal
+    |--------------------------------------------------------------------------
+    */
+
+    principalMessage: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    principalName: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    principalPhoto: {
+      type: String,
+      default: "",
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Branding
+    |--------------------------------------------------------------------------
+    */
+
+    primaryColor: {
+      type: String,
+      default: "#0F766E",
+      trim: true,
+    },
+
+    secondaryColor: {
+      type: String,
+      default: "#63E6BE",
+      trim: true,
+    },
+
+    heroImage: {
+      type: String,
+      default: "",
+    },
+
+    favicon: {
+      type: String,
+      default: "",
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Homepage Sections
+    |--------------------------------------------------------------------------
+    */
+
+    showPrincipalMessage: {
+      type: Boolean,
+      default: true,
+    },
+
+    showTestimonials: {
+      type: Boolean,
+      default: true,
+    },
+
+    showStatistics: {
+      type: Boolean,
+      default: true,
+    },
+
+    showEvents: {
+      type: Boolean,
+      default: true,
+    },
+
+    showNews: {
+      type: Boolean,
+      default: true,
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Website Contact
+    |--------------------------------------------------------------------------
+    */
+
+    whatsapp: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    googleMapsUrl: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Social Media
+    |--------------------------------------------------------------------------
+    */
+
+    facebook: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    instagram: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    x: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    linkedin: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    youtube: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
 const schoolSchema = new mongoose.Schema(
   {
+    /*
+    |--------------------------------------------------------------------------
+    | Basic School Information
+    |--------------------------------------------------------------------------
+    */
+
     name: {
       type: String,
       required: true,
       trim: true,
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Public Website Slug
+    |--------------------------------------------------------------------------
+    */
+
+    slug: {
+      type: String,
+      unique: true,
+      sparse: true,
+      lowercase: true,
+      trim: true,
+      index: true,
     },
 
     email: {
@@ -139,17 +410,59 @@ const schoolSchema = new mongoose.Schema(
       default: "",
     },
 
+    /*
+    |--------------------------------------------------------------------------
+    | Public Website
+    |--------------------------------------------------------------------------
+    */
+
+    website: {
+      enabled: {
+        type: Boolean,
+        default: true,
+      },
+
+      customDomain: {
+        type: String,
+        default: "",
+        trim: true,
+        lowercase: true,
+      },
+
+      customDomainVerified: {
+        type: Boolean,
+        default: false,
+      },
+    },
+
+    publicProfile: {
+      type: publicProfileSchema,
+      default: () => ({}),
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Bank Details
+    |--------------------------------------------------------------------------
+    */
+
     bankDetails: {
-  type: bankDetailsSchema,
-  default: () => ({
-    accountName: "",
-    accountNumber: "",
-    bankName: "",
-    bankCode: "",
-    paymentInstructions: "",
-    isProvided: false,
-  }),
-},
+      type: bankDetailsSchema,
+      default: () => ({
+        accountName: "",
+        accountNumber: "",
+        bankName: "",
+        bankCode: "",
+        paymentInstructions: "",
+        isProvided: false,
+      }),
+    },
+
+    /*
+    |--------------------------------------------------------------------------
+    | Grading System
+    |--------------------------------------------------------------------------
+    */
 
     gradingSystem: {
       caMaximum: {
@@ -240,6 +553,12 @@ const schoolSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+/*
+|--------------------------------------------------------------------------
+| Validation
+|--------------------------------------------------------------------------
+*/
 
 schoolSchema.pre("validate", function (next) {
   if (this.gradingSystem) {

@@ -22,8 +22,10 @@ export const createSchool = async (req, res) => {
       });
     }
 
+    const normalizedEmail = email.toLowerCase().trim();
+
     const existingSchool = await School.findOne({
-      email: email.toLowerCase(),
+      email: normalizedEmail,
     });
 
     if (existingSchool) {
@@ -32,9 +34,41 @@ export const createSchool = async (req, res) => {
       });
     }
 
+    /* -------------------------------------------------------
+       GENERATE PUBLIC WEBSITE SLUG
+    ------------------------------------------------------- */
+
+    const baseSlug = name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "");
+
+    if (!baseSlug) {
+      return res.status(400).json({
+        message:
+          "School name cannot be used to generate a website address",
+      });
+    }
+
+    let slug = baseSlug;
+    let counter = 1;
+
+    while (await School.exists({ slug })) {
+      counter += 1;
+      slug = `${baseSlug}-${counter}`;
+    }
+
+    /* -------------------------------------------------------
+       CREATE SCHOOL
+    ------------------------------------------------------- */
+
     const school = await School.create({
-      name,
-      email: email.toLowerCase(),
+      name: name.trim(),
+      slug,
+      email: normalizedEmail,
       phone,
       address,
       city,

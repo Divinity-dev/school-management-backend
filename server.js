@@ -24,6 +24,8 @@ import studentFeeAccountRoutes from "./routes/studentFeeAccountRoutes.js";
 import parentPaymentRoutes from "./routes/parentPaymentRoutes.js";
 import announcementRoutes from "./routes/announcementRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
+import publicSchoolRoutes from "./routes/publicSchoolRoutes.js";
+import schoolPostRoutes from "./routes/schoolPostRoutes.js";
 import cors from "cors";
 
 
@@ -80,7 +82,8 @@ app.use("/api/student-fee-accounts", studentFeeAccountRoutes);
 app.use("/api/parent-payments", parentPaymentRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/users", userRoutes);
-
+app.use("/api/public", publicSchoolRoutes);
+app.use("/api/public", schoolPostRoutes);
 connectDB();
 
 const PORT = process.env.PORT || 5000;
