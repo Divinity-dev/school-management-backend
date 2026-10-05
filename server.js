@@ -26,6 +26,7 @@ import announcementRoutes from "./routes/announcementRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import publicSchoolRoutes from "./routes/publicSchoolRoutes.js";
 import schoolPostRoutes from "./routes/schoolPostRoutes.js";
+import superAdminRoutes from "./routes/superAdminRoutes.js";
 import cors from "cors";
 
 
@@ -84,6 +85,7 @@ app.use("/api/announcements", announcementRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/public", publicSchoolRoutes);
 app.use("/api/public", schoolPostRoutes);
+app.use("/api/super-admin", superAdminRoutes);
 connectDB();
 
 const PORT = process.env.PORT || 5000;
