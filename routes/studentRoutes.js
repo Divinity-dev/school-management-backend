@@ -1,3 +1,4 @@
+
 import express from "express";
 
 import {
@@ -13,6 +14,15 @@ import {
 } from "../controllers/studentController.js";
 
 import {
+  downloadStudentImportTemplate,
+  previewStudentImport,
+  confirmStudentImport,
+  downloadStudentImportErrorReport,
+} from "../controllers/studentImportController.js";
+
+import upload from "../middleware/studentImportMiddleware.js";
+
+import {
   protect,
   authorize,
 } from "../middleware/authMiddleware.js";
@@ -23,32 +33,49 @@ import {
 
 const router = express.Router();
 
-// All student routes require authentication
+// All student routes require authentication.
 router.use(protect);
 
-// View students
+// Student import routes — register before /:id.
+router.get(
+  "/import/template",
+  authorize("schoolAdmin"),
+  downloadStudentImportTemplate
+);
 
+router.post(
+  "/import/preview",
+  authorize("schoolAdmin"),
+  upload.single("file"),
+  previewStudentImport
+);
+
+router.post(
+  "/import/confirm",
+  authorize("schoolAdmin"),
+  upload.single("file"),
+  confirmStudentImport
+);
+
+router.post(
+  "/import/error-report",
+  authorize("schoolAdmin"),
+  downloadStudentImportErrorReport
+);
+
+// View students.
 router.get("/", getStudents);
-
 router.get("/session/:sessionId", getStudentsBySession);
-
 router.get("/class/:classId", getStudentsByClass);
-
-// Student enrollment growth
 router.get("/growth", getStudentGrowth);
 
-router.get("/:id", getStudent);
-
-// School administration
-
+// School administration.
 router.post(
   "/",
   authorize("schoolAdmin"),
   requireActiveSubscription,
   createStudent
 );
-
-// Create portal account for an existing student
 
 router.post(
   "/:id/create-account",
@@ -67,5 +94,8 @@ router.patch(
   authorize("schoolAdmin"),
   deactivateStudent
 );
+
+// Keep the generic ID route after the named routes.
+router.get("/:id", getStudent);
 
 export default router;

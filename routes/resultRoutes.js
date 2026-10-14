@@ -1,3 +1,4 @@
+
 import express from "express";
 
 import {
@@ -14,11 +15,25 @@ import {
   getTeacherResults,
   getTeacherRoster,
   submitTeacherResults,
-  getAdminResults
+  getAdminResults,
+  getResultForAdminReview,
+  getAdminClassResultsMatrix,
 } from "../controllers/resultController.js";
 
-import { protect } from "../middleware/authMiddleware.js";
-import { requireActiveSubscription } from "../middleware/subscriptionMiddleware.js";
+import {
+  getMyReportCard,
+  getSchoolDaysOpened,
+  updateSchoolDaysOpened,
+} from "../controllers/reportCardController.js";
+
+import {
+  protect,
+  authorize,
+} from "../middleware/authMiddleware.js";
+
+import {
+  requireActiveSubscription,
+} from "../middleware/subscriptionMiddleware.js";
 
 const router = express.Router();
 
@@ -34,6 +49,12 @@ router.post(
 router.get("/my-results", protect, getMyResults);
 
 router.get("/admin-results", protect, getAdminResults);
+
+router.get(
+  "/admin-class-matrix",
+  protect,
+  getAdminClassResultsMatrix
+);
 
 router.get(
   "/analytics/class-averages",
@@ -65,12 +86,42 @@ router.get(
   getTeacherRoster
 );
 
+// Student report card for one academic session and term
+router.get(
+  "/report-card",
+  protect,
+  getMyReportCard
+);
+
+// School-wide school days opened
+router.get(
+  "/school-days-opened",
+  protect,
+  authorize("schoolAdmin"),
+  getSchoolDaysOpened
+);
+
+router.put(
+  "/school-days-opened",
+  protect,
+  authorize("schoolAdmin"),
+  requireActiveSubscription,
+  updateSchoolDaysOpened
+);
+
 // Submit teacher results
 router.post(
   "/teacher-results/submit",
   protect,
   requireActiveSubscription,
   submitTeacherResults
+);
+
+// Admin review
+router.get(
+  "/admin-review/:id",
+  protect,
+  getResultForAdminReview
 );
 
 // Update result

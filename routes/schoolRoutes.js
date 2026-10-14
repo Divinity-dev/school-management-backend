@@ -6,6 +6,8 @@ import {
   updateSchoolGradingSystem,
   getSchoolBankDetails,
   updateSchoolBankDetails,
+  getReportCardBranding,
+  updateReportCardBranding,
 } from "../controllers/schoolController.js";
 
 import {
@@ -35,6 +37,20 @@ router.get(
   protect,
   authorize("schoolAdmin"),
   getSchoolGradingSystem
+);
+
+router.get(
+  "/report-card-branding",
+  protect,
+  authorize("schoolAdmin"),
+  getReportCardBranding
+);
+
+router.put(
+  "/report-card-branding",
+  protect,
+  authorize("schoolAdmin"),
+  updateReportCardBranding
 );
 
 router.put(

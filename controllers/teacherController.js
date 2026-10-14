@@ -1,5 +1,6 @@
 import bcrypt from "bcrypt";
 import User from "../models/User.js";
+import generateUsername from "../utils/generateUsername.js";
 
 // @desc    Create teacher
 // @route   POST /api/teachers
@@ -15,31 +16,44 @@ export const createTeacher = async (req, res) => {
       profileImage,
     } = req.body;
 
-    if (!firstName || !lastName || !email || !password) {
+    if (!firstName?.trim() || !lastName?.trim() || !password) {
       return res.status(400).json({
-        message:
-          "First name, last name, email and password are required",
+        message: "First name, last name and password are required",
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-
-    const existingUser = await User.findOne({
-      email: normalizedEmail,
-    });
-
-    if (existingUser) {
+    if (password.length < 6) {
       return res.status(400).json({
-        message: "A user with this email already exists",
+        message: "Password must be at least 6 characters",
       });
     }
+
+    const normalizedEmail = email?.trim().toLowerCase() || undefined;
+
+    if (normalizedEmail) {
+      const existingEmail = await User.findOne({
+        email: normalizedEmail,
+      });
+
+      if (existingEmail) {
+        return res.status(409).json({
+          message: "A user with this email already exists",
+        });
+      }
+    }
+
+    const username = await generateUsername(
+      firstName.trim(),
+      lastName.trim()
+    );
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const teacher = await User.create({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
-      email: normalizedEmail,
+      username,
+      ...(normalizedEmail ? { email: normalizedEmail } : {}),
       password: hashedPassword,
       role: "teacher",
       school: req.user.school,
@@ -47,21 +61,37 @@ export const createTeacher = async (req, res) => {
       profileImage: profileImage || "",
     });
 
-    const teacherResponse = teacher.toObject();
-    delete teacherResponse.password;
-
-    res.status(201).json({
+    return res.status(201).json({
       message: "Teacher created successfully",
-      teacher: teacherResponse,
+      teacher: {
+        id: teacher._id,
+        firstName: teacher.firstName,
+        lastName: teacher.lastName,
+        username: teacher.username,
+        email: teacher.email || null,
+        phone: teacher.phone,
+        profileImage: teacher.profileImage,
+        role: teacher.role,
+        school: teacher.school,
+        isActive: teacher.isActive,
+      },
     });
   } catch (error) {
     console.error("Create teacher error:", error);
 
-    res.status(500).json({
-      message: "Server error",
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message:
+          "A username or email conflict occurred. Please try again.",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Server error while creating teacher",
     });
   }
 };
+
 
 // @desc    Get all teachers in school
 // @route   GET /api/teachers

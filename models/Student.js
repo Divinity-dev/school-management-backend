@@ -1,4 +1,9 @@
+
 import mongoose from "mongoose";
+import {
+  normalizeStudentId,
+  isValidStudentId,
+} from "../utils/normalizeStudentId.js";
 
 const studentSchema = new mongoose.Schema(
   {
@@ -12,6 +17,12 @@ const studentSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      set: normalizeStudentId,
+      validate: {
+        validator: isValidStudentId,
+        message:
+          "Student ID must follow the format STU-0001.",
+      },
     },
 
     firstName: {
@@ -72,12 +83,10 @@ const studentSchema = new mongoose.Schema(
     },
 
     user: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "User",
-  default: null,
-  unique: true,
-  sparse: true,
-},
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
 
     address: {
       type: String,
@@ -101,14 +110,20 @@ const studentSchema = new mongoose.Schema(
   }
 );
 
-// A student ID must be unique within a school
+// Student IDs must be unique within each school.
 studentSchema.index(
-  {
-    school: 1,
-    studentId: 1,
-  },
+  { school: 1, studentId: 1 },
+  { unique: true }
+);
+
+// A portal account can belong to only one student.
+studentSchema.index(
+  { user: 1 },
   {
     unique: true,
+    partialFilterExpression: {
+      user: { $type: "objectId" },
+    },
   }
 );
 

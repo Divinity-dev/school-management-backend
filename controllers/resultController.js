@@ -1,3 +1,4 @@
+
 import Result from "../models/Result.js";
 import Student from "../models/Student.js";
 import SchoolClass from "../models/SchoolClass.js";
@@ -6,6 +7,7 @@ import AcademicSession from "../models/AcademicSession.js";
 import AcademicTerm from "../models/AcademicTerm.js";
 import SubjectAssignment from "../models/SubjectAssignment.js";
 import School from "../models/School.js";
+import ClassTeacherRemark from "../models/ClassTeacherRemark.js";
 
 /* =========================================================
    HELPERS
@@ -26,6 +28,14 @@ const verifyTeacherSubjectAssignment = async ({
     academicSession,
     isActive: true,
   });
+};
+
+const validateTermSession = (termRecord, academicSession) => {
+  return Boolean(
+    termRecord?.academicSession &&
+      termRecord.academicSession.toString() ===
+        academicSession.toString()
+  );
 };
 
 const getConfiguredGradingSystem = (school) => {
@@ -367,6 +377,13 @@ export const createResult = async (req, res) => {
       });
     }
 
+    if (!validateTermSession(termRecord, academicSession)) {
+      return res.status(400).json({
+        message:
+          "The selected academic term does not belong to this academic session.",
+      });
+    }
+
     const assignment = await verifyTeacherSubjectAssignment({
       teacherId: req.user._id,
       schoolId: req.user.school,
@@ -425,17 +442,13 @@ export const createResult = async (req, res) => {
       subject,
       academicSession,
       academicTerm,
-
       assessmentScores: calculated.assessmentScores,
-
       caScore: calculated.caScore,
       examScore: calculated.examScore,
       total: calculated.total,
       grade: calculated.grade,
       remark: calculated.remark,
-
       gradingSystem: buildGradingSystemSnapshot(gradingSystem),
-
       status: "draft",
       enteredBy: req.user._id,
     });
@@ -460,10 +473,7 @@ export const createResult = async (req, res) => {
 export const updateResult = async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      assessmentScores,
-      examScore,
-    } = req.body;
+    const { assessmentScores, examScore } = req.body;
 
     const result = await Result.findOne({
       _id: id,
@@ -505,15 +515,12 @@ export const updateResult = async (req, res) => {
     }
 
     result.assessmentScores = calculated.assessmentScores;
-
     result.caScore = calculated.caScore;
     result.examScore = calculated.examScore;
     result.total = calculated.total;
     result.grade = calculated.grade;
     result.remark = calculated.remark;
-
-    result.gradingSystem =
-      buildGradingSystemSnapshot(gradingSystem);
+    result.gradingSystem = buildGradingSystemSnapshot(gradingSystem);
 
     await result.save();
 
@@ -593,8 +600,7 @@ export const publishResult = async (req, res) => {
 
     if (result.status !== "pending_review") {
       return res.status(400).json({
-        message:
-          "Only results pending review can be published.",
+        message: "Only results pending review can be published.",
       });
     }
 
@@ -637,8 +643,7 @@ export const rejectResult = async (req, res) => {
 
     if (result.status !== "pending_review") {
       return res.status(400).json({
-        message:
-          "Only results pending review can be rejected.",
+        message: "Only results pending review can be rejected.",
       });
     }
 
@@ -723,9 +728,7 @@ export const getMyResults = async (req, res) => {
     const results = await Result.find({
       school: req.user.school,
       student: student._id,
-      status: {
-        $in: ["published", "locked"],
-      },
+      status: { $in: ["published", "locked"] },
     })
       .populate("subject", "name code")
       .populate("schoolClass", "name")
@@ -737,6 +740,48 @@ export const getMyResults = async (req, res) => {
         subject: 1,
       });
 
+    const periods = [
+      ...new Map(
+        results.map((result) => [
+          `${result.schoolClass?._id}_${result.academicSession?._id}_${result.academicTerm?._id}`,
+          {
+            schoolClass: result.schoolClass?._id,
+            academicSession: result.academicSession?._id,
+            academicTerm: result.academicTerm?._id,
+          },
+        ])
+      ).values(),
+    ];
+
+    const remarks = periods.length
+      ? await ClassTeacherRemark.find({
+          school: req.user.school,
+          student: student._id,
+          submittedAt: { $ne: null },
+          $or: periods.map((period) => ({
+            schoolClass: period.schoolClass,
+            academicSession: period.academicSession,
+            academicTerm: period.academicTerm,
+          })),
+        }).lean()
+      : [];
+
+    const remarkMap = new Map(
+      remarks.map((item) => [
+        `${item.schoolClass}_${item.academicSession}_${item.academicTerm}`,
+        item.remark,
+      ])
+    );
+
+    const resultsWithClassTeacherRemark = results.map((result) => {
+      const key = `${result.schoolClass?._id}_${result.academicSession?._id}_${result.academicTerm?._id}`;
+
+      return {
+        ...result.toObject(),
+        classTeacherRemark: remarkMap.get(key) || "",
+      };
+    });
+
     return res.status(200).json({
       student: {
         _id: student._id,
@@ -745,7 +790,7 @@ export const getMyResults = async (req, res) => {
         firstName: student.user?.firstName || "",
         lastName: student.user?.lastName || "",
       },
-      results,
+      results: resultsWithClassTeacherRemark,
     });
   } catch (error) {
     console.error("Get my results error:", error);
@@ -771,9 +816,7 @@ export const getClassAverages = async (req, res) => {
 
     const filter = {
       school: req.user.school,
-      status: {
-        $in: ["published", "locked"],
-      },
+      status: { $in: ["published", "locked"] },
     };
 
     if (schoolClass) filter.schoolClass = schoolClass;
@@ -782,27 +825,17 @@ export const getClassAverages = async (req, res) => {
     if (academicTerm) filter.academicTerm = academicTerm;
 
     const averages = await Result.aggregate([
-      {
-        $match: filter,
-      },
+      { $match: filter },
       {
         $group: {
           _id: {
             schoolClass: "$schoolClass",
             subject: "$subject",
           },
-          average: {
-            $avg: "$total",
-          },
-          highest: {
-            $max: "$total",
-          },
-          lowest: {
-            $min: "$total",
-          },
-          count: {
-            $sum: 1,
-          },
+          average: { $avg: "$total" },
+          highest: { $max: "$total" },
+          lowest: { $min: "$total" },
+          count: { $sum: 1 },
         },
       },
       {
@@ -813,9 +846,7 @@ export const getClassAverages = async (req, res) => {
       },
     ]);
 
-    return res.status(200).json({
-      averages,
-    });
+    return res.status(200).json({ averages });
   } catch (error) {
     console.error("Get class averages error:", error);
 
@@ -851,20 +882,14 @@ export const getClassRanking = async (req, res) => {
           schoolClass,
           academicSession,
           academicTerm,
-          status: {
-            $in: ["published", "locked"],
-          },
+          status: { $in: ["published", "locked"] },
         },
       },
       {
         $group: {
           _id: "$student",
-          totalScore: {
-            $sum: "$total",
-          },
-          subjectCount: {
-            $sum: 1,
-          },
+          totalScore: { $sum: "$total" },
+          subjectCount: { $sum: 1 },
         },
       },
       {
@@ -924,10 +949,8 @@ export const getStudentReport = async (req, res) => {
 
     const results = await Result.find({
       school: req.user.school,
-      student: studentId,
-      status: {
-        $in: ["published", "locked"],
-      },
+      student: student._id,
+      status: { $in: ["published", "locked"] },
     })
       .populate("subject", "name code")
       .populate("schoolClass", "name")
@@ -939,24 +962,64 @@ export const getStudentReport = async (req, res) => {
         subject: 1,
       });
 
-    const subjects = results.map((result) => ({
-      resultId: result._id,
+    const periods = [
+      ...new Map(
+        results.map((result) => [
+          `${result.schoolClass?._id}_${result.academicSession?._id}_${result.academicTerm?._id}`,
+          {
+            schoolClass: result.schoolClass?._id,
+            academicSession: result.academicSession?._id,
+            academicTerm: result.academicTerm?._id,
+          },
+        ])
+      ).values(),
+    ];
 
-      subject: result.subject,
+    const remarks = periods.length
+      ? await ClassTeacherRemark.find({
+          school: req.user.school,
+          student: student._id,
+          submittedAt: { $ne: null },
+          $or: periods.map((period) => ({
+            schoolClass: period.schoolClass,
+            academicSession: period.academicSession,
+            academicTerm: period.academicTerm,
+          })),
+        }).lean()
+      : [];
 
-      assessmentScores: result.assessmentScores,
+    const remarkMap = new Map(
+      remarks.map((item) => [
+        `${item.schoolClass}_${item.academicSession}_${item.academicTerm}`,
+        item.remark,
+      ])
+    );
 
-      caScore: result.caScore,
-      examScore: result.examScore,
-      total: result.total,
+    const subjects = results.map((result) => {
+      const key = `${result.schoolClass?._id}_${result.academicSession?._id}_${result.academicTerm?._id}`;
 
-      grade: result.grade,
-      remark: result.remark,
+      return {
+        resultId: result._id,
+        subject: result.subject,
+        schoolClass: result.schoolClass,
+        academicSession: result.academicSession,
+        academicTerm: result.academicTerm,
+        assessmentScores: result.assessmentScores,
+        caScore: result.caScore,
+        examScore: result.examScore,
+        total: result.total,
+        grade: result.grade,
 
-      gradingSystem: result.gradingSystem,
+        // Subject-specific grading remark.
+        remark: result.remark,
 
-      status: result.status,
-    }));
+        // Separately submitted class teacher remark.
+        classTeacherRemark: remarkMap.get(key) || "",
+
+        gradingSystem: result.gradingSystem,
+        status: result.status,
+      };
+    });
 
     const totalScore = results.reduce(
       (sum, result) => sum + result.total,
@@ -964,9 +1027,7 @@ export const getStudentReport = async (req, res) => {
     );
 
     const averageScore =
-      results.length > 0
-        ? totalScore / results.length
-        : 0;
+      results.length > 0 ? totalScore / results.length : 0;
 
     const school = await School.findById(req.user.school);
 
@@ -987,7 +1048,13 @@ export const getStudentReport = async (req, res) => {
     }
 
     return res.status(200).json({
-      student,
+      student: {
+        _id: student._id,
+        studentId: student.studentId,
+        admissionNumber: student.admissionNumber,
+        firstName: student.user?.firstName || "",
+        lastName: student.user?.lastName || "",
+      },
       subjects,
       summary: {
         totalSubjects: results.length,
@@ -1035,13 +1102,9 @@ export const getTeacherResults = async (req, res) => {
       .populate("subject", "name code")
       .populate("academicSession", "name")
       .populate("academicTerm", "name")
-      .sort({
-        createdAt: -1,
-      });
+      .sort({ createdAt: -1 });
 
-    return res.status(200).json({
-      results,
-    });
+    return res.status(200).json({ results });
   } catch (error) {
     console.error("Get teacher results error:", error);
 
@@ -1101,6 +1164,36 @@ export const getTeacherRoster = async (req, res) => {
       });
     }
 
+    const [sessionRecord, termRecord] = await Promise.all([
+      AcademicSession.findOne({
+        _id: academicSession,
+        school: req.user.school,
+      }),
+      AcademicTerm.findOne({
+        _id: academicTerm,
+        school: req.user.school,
+      }),
+    ]);
+
+    if (!sessionRecord) {
+      return res.status(404).json({
+        message: "Academic session not found.",
+      });
+    }
+
+    if (!termRecord) {
+      return res.status(404).json({
+        message: "Academic term not found.",
+      });
+    }
+
+    if (!validateTermSession(termRecord, academicSession)) {
+      return res.status(400).json({
+        message:
+          "The selected academic term does not belong to this academic session.",
+      });
+    }
+
     const students = await Student.find({
       school: req.user.school,
       schoolClass,
@@ -1116,9 +1209,7 @@ export const getTeacherRoster = async (req, res) => {
 
     const results = await Result.find({
       school: req.user.school,
-      student: {
-        $in: studentIds,
-      },
+      student: { $in: studentIds },
       schoolClass,
       subject,
       academicSession,
@@ -1146,7 +1237,6 @@ export const getTeacherRoster = async (req, res) => {
           lastName: student.user?.lastName || "",
           email: student.user?.email || "",
         },
-
         result: result
           ? {
               _id: result._id,
@@ -1167,12 +1257,9 @@ export const getTeacherRoster = async (req, res) => {
         caMaximum: gradingSystem.caMaximum,
         examMaximum: gradingSystem.examMaximum,
         totalMaximum: gradingSystem.totalMaximum,
-
         caComponents: gradingSystem.caComponents,
-
         gradingScale: gradingSystem.gradingScale,
       },
-
       roster,
     });
   } catch (error) {
@@ -1185,7 +1272,7 @@ export const getTeacherRoster = async (req, res) => {
 };
 
 /* =========================================================
-   SUBMIT TEACHER RESULTS
+   SAVE TEACHER RESULTS AS DRAFTS
 ========================================================= */
 
 export const submitTeacherResults = async (req, res) => {
@@ -1206,13 +1293,24 @@ export const submitTeacherResults = async (req, res) => {
     ) {
       return res.status(400).json({
         message:
-          "schoolClass, subject, academicSession and academicTerm are required.",
+          "Class, subject, academic session and academic term are required.",
       });
     }
 
     if (!Array.isArray(results) || results.length === 0) {
       return res.status(400).json({
         message: "Results must be a non-empty array.",
+      });
+    }
+
+    const studentIds = results.map((item) => item?.student);
+
+    if (
+      studentIds.some((id) => !id) ||
+      new Set(studentIds.map(String)).size !== studentIds.length
+    ) {
+      return res.status(400).json({
+        message: "Every result must have a unique student ID.",
       });
     }
 
@@ -1241,10 +1339,16 @@ export const submitTeacherResults = async (req, res) => {
       });
     }
 
-    const sessionRecord = await AcademicSession.findOne({
-      _id: academicSession,
-      school: req.user.school,
-    });
+    const [sessionRecord, termRecord] = await Promise.all([
+      AcademicSession.findOne({
+        _id: academicSession,
+        school: req.user.school,
+      }),
+      AcademicTerm.findOne({
+        _id: academicTerm,
+        school: req.user.school,
+      }),
+    ]);
 
     if (!sessionRecord) {
       return res.status(404).json({
@@ -1252,46 +1356,41 @@ export const submitTeacherResults = async (req, res) => {
       });
     }
 
-    const termRecord = await AcademicTerm.findOne({
-      _id: academicTerm,
-      school: req.user.school,
-    });
-
     if (!termRecord) {
       return res.status(404).json({
         message: "Academic term not found.",
       });
     }
 
-    const studentIds = results.map((item) => item.student);
+    if (!validateTermSession(termRecord, academicSession)) {
+      return res.status(400).json({
+        message:
+          "The selected academic term does not belong to this academic session.",
+      });
+    }
 
     const students = await Student.find({
-      _id: {
-        $in: studentIds,
-      },
+      _id: { $in: studentIds },
       school: req.user.school,
       schoolClass,
       isActive: true,
-    });
+    }).select("_id");
 
     if (students.length !== studentIds.length) {
       return res.status(400).json({
         message:
-          "One or more students do not belong to this class.",
+          "One or more students do not belong to this class or are inactive.",
       });
     }
 
     const existingResults = await Result.find({
       school: req.user.school,
-      student: {
-        $in: studentIds,
-      },
+      student: { $in: studentIds },
+      schoolClass,
       subject,
       academicSession,
       academicTerm,
-    }).select(
-      "_id student assessmentScores caScore examScore total grade remark status"
-    );
+    });
 
     const existingResultMap = new Map(
       existingResults.map((result) => [
@@ -1300,13 +1399,17 @@ export const submitTeacherResults = async (req, res) => {
       ])
     );
 
-    const createdResults = [];
-    const updatedResults = [];
+    const preparedResults = [];
 
     for (const item of results) {
-      if (!item.student) {
+      const existingResult = existingResultMap.get(
+        String(item.student)
+      );
+
+      if (existingResult && existingResult.status !== "draft") {
         return res.status(400).json({
-          message: "Every result must contain a student.",
+          message:
+            "Only draft results can be edited. A result may already have been submitted for review, published, or locked.",
         });
       }
 
@@ -1322,54 +1425,46 @@ export const submitTeacherResults = async (req, res) => {
         });
       }
 
-      const existingResult = existingResultMap.get(
-        item.student.toString()
-      );
+      preparedResults.push({
+        studentId: String(item.student),
+        existingResult,
+        calculated,
+      });
+    }
+
+    const createdResults = [];
+    const updatedResults = [];
+
+    for (const item of preparedResults) {
+      const {
+        studentId,
+        existingResult,
+        calculated,
+      } = item;
+
+      const resultData = {
+        assessmentScores: calculated.assessmentScores,
+        caScore: calculated.caScore,
+        examScore: calculated.examScore,
+        total: calculated.total,
+        grade: calculated.grade,
+        remark: calculated.remark,
+        gradingSystem: buildGradingSystemSnapshot(gradingSystem),
+      };
 
       if (existingResult) {
-        if (existingResult.status !== "draft") {
-          return res.status(400).json({
-            message:
-              "Only draft results can be updated.",
-          });
-        }
-
-        existingResult.assessmentScores =
-          calculated.assessmentScores;
-
-        existingResult.caScore = calculated.caScore;
-        existingResult.examScore = calculated.examScore;
-        existingResult.total = calculated.total;
-        existingResult.grade = calculated.grade;
-        existingResult.remark = calculated.remark;
-
-        existingResult.gradingSystem =
-          buildGradingSystemSnapshot(gradingSystem);
-
+        Object.assign(existingResult, resultData);
         await existingResult.save();
-
         updatedResults.push(existingResult);
       } else {
         const newResult = await Result.create({
           school: req.user.school,
-          student: item.student,
+          student: studentId,
           schoolClass,
           subject,
           academicSession,
           academicTerm,
-
-          assessmentScores:
-            calculated.assessmentScores,
-
-          caScore: calculated.caScore,
-          examScore: calculated.examScore,
-          total: calculated.total,
-          grade: calculated.grade,
-          remark: calculated.remark,
-
-          gradingSystem:
-            buildGradingSystemSnapshot(gradingSystem),
-
+          ...resultData,
           status: "draft",
           enteredBy: req.user._id,
         });
@@ -1379,16 +1474,15 @@ export const submitTeacherResults = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: "Teacher results saved successfully.",
+      message: "Results saved as drafts successfully.",
       created: createdResults,
       updated: updatedResults,
     });
   } catch (error) {
-    console.error("Submit teacher results error:", error);
+    console.error("Save teacher results error:", error);
 
     return res.status(500).json({
-      message:
-        error.message || "Failed to save teacher results.",
+      message: error.message || "Failed to save teacher results.",
     });
   }
 };
@@ -1413,34 +1507,20 @@ export const getAdminResults = async (req, res) => {
 
     if (schoolClass) filter.schoolClass = schoolClass;
     if (subject) filter.subject = subject;
-    if (academicSession) {
-      filter.academicSession = academicSession;
-    }
-    if (academicTerm) {
-      filter.academicTerm = academicTerm;
-    }
+    if (academicSession) filter.academicSession = academicSession;
+    if (academicTerm) filter.academicTerm = academicTerm;
     if (status) filter.status = status;
 
     const results = await Result.find(filter)
-      .populate(
-        "student",
-        "studentId admissionNumber user"
-      )
+      .populate("student", "studentId admissionNumber user")
       .populate("schoolClass", "name")
       .populate("subject", "name code")
       .populate("academicSession", "name")
       .populate("academicTerm", "name")
-      .populate(
-        "enteredBy",
-        "firstName lastName email"
-      )
-      .sort({
-        createdAt: -1,
-      });
+      .populate("enteredBy", "firstName lastName email")
+      .sort({ createdAt: -1 });
 
-    return res.status(200).json({
-      results,
-    });
+    return res.status(200).json({ results });
   } catch (error) {
     console.error("Get admin results error:", error);
 
@@ -1449,3 +1529,262 @@ export const getAdminResults = async (req, res) => {
     });
   }
 };
+
+/* =========================================================
+   GET SINGLE RESULT FOR ADMIN REVIEW
+========================================================= */
+
+export const getResultForAdminReview = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await Result.findOne({
+      _id: id,
+      school: req.user.school,
+    })
+      .populate({
+        path: "student",
+        select: "studentId admissionNumber user schoolClass",
+        populate: {
+          path: "user",
+          select: "firstName middleName lastName email",
+        },
+      })
+      .populate("schoolClass", "name arm")
+      .populate("subject", "name code")
+      .populate("academicSession", "name")
+      .populate("academicTerm", "name")
+      .populate("enteredBy", "firstName middleName lastName email");
+
+    if (!result) {
+      return res.status(404).json({
+        message: "Result not found.",
+      });
+    }
+
+    return res.status(200).json({ result });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || "Failed to fetch result for review.",
+    });
+  }
+};
+
+/* =========================================================
+   GET CLASS RESULTS MATRIX FOR SCHOOL ADMIN
+========================================================= */
+
+export const getAdminClassResultsMatrix = async (req, res) => {
+  try {
+    const {
+      schoolClass,
+      academicSession,
+      academicTerm,
+    } = req.query;
+
+    if (!schoolClass || !academicSession || !academicTerm) {
+      return res.status(400).json({
+        message:
+          "Class, academic session and academic term are required.",
+      });
+    }
+
+    const schoolId = req.user.school;
+
+    const [classRecord, sessionRecord, termRecord] =
+      await Promise.all([
+        SchoolClass.findOne({
+          _id: schoolClass,
+          school: schoolId,
+          isActive: true,
+        }),
+        AcademicSession.findOne({
+          _id: academicSession,
+          school: schoolId,
+        }),
+        AcademicTerm.findOne({
+          _id: academicTerm,
+          school: schoolId,
+        }),
+      ]);
+
+    if (!classRecord) {
+      return res.status(404).json({
+        message: "Class not found.",
+      });
+    }
+
+    if (!sessionRecord) {
+      return res.status(404).json({
+        message: "Academic session not found.",
+      });
+    }
+
+    if (!termRecord) {
+      return res.status(404).json({
+        message: "Academic term not found.",
+      });
+    }
+
+    if (!validateTermSession(termRecord, academicSession)) {
+      return res.status(400).json({
+        message:
+          "The selected academic term does not belong to this academic session.",
+      });
+    }
+
+    const [students, assignments, results] = await Promise.all([
+      Student.find({
+        school: schoolId,
+        schoolClass,
+        isActive: true,
+      })
+        .populate("user", "firstName middleName lastName email")
+        .sort({ createdAt: 1 }),
+
+      SubjectAssignment.find({
+        school: schoolId,
+        schoolClass,
+        academicSession,
+        isActive: true,
+      }).populate("subject", "name code"),
+
+      Result.find({
+        school: schoolId,
+        schoolClass,
+        academicSession,
+        academicTerm,
+      })
+        .populate("subject", "name code")
+        .populate("enteredBy", "firstName middleName lastName email")
+        .sort({ createdAt: -1 }),
+    ]);
+
+    const subjectMap = new Map();
+
+    for (const assignment of assignments) {
+      const subject = assignment.subject;
+
+      if (subject?._id) {
+        subjectMap.set(subject._id.toString(), {
+          _id: subject._id,
+          name: subject.name,
+          code: subject.code || "",
+        });
+      }
+    }
+
+    for (const result of results) {
+      const subject = result.subject;
+
+      if (subject?._id) {
+        subjectMap.set(subject._id.toString(), {
+          _id: subject._id,
+          name: subject.name,
+          code: subject.code || "",
+        });
+      }
+    }
+
+    const subjects = Array.from(subjectMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+
+    const formattedStudents = students.map((student) => ({
+      _id: student._id,
+      studentId: student.studentId || "",
+      admissionNumber: student.admissionNumber || "",
+      firstName: student.user?.firstName || "",
+      middleName: student.user?.middleName || "",
+      lastName: student.user?.lastName || "",
+      email: student.user?.email || "",
+    }));
+
+    const resultMap = new Map();
+
+    for (const result of results) {
+      const key = `${result.student.toString()}_${result.subject?._id?.toString()}`;
+
+      resultMap.set(key, {
+        _id: result._id,
+        student: result.student,
+        subject: result.subject,
+        caScore: result.caScore,
+        examScore: result.examScore,
+        total: result.total,
+        grade: result.grade,
+        remark: result.remark,
+        status: result.status,
+        enteredBy: result.enteredBy,
+        assessmentScores: result.assessmentScores,
+        gradingSystem: result.gradingSystem,
+        publishedAt: result.publishedAt,
+        lockedAt: result.lockedAt,
+      });
+    }
+
+    const matrix = formattedStudents.map((student) => ({
+      student,
+      subjects: subjects.map((subject) => ({
+        subject,
+        result:
+          resultMap.get(
+            `${student._id.toString()}_${subject._id.toString()}`
+          ) || null,
+      })),
+    }));
+
+    const expectedResults = formattedStudents.length * subjects.length;
+
+    const presentResults = matrix.reduce(
+      (count, row) =>
+        count +
+        row.subjects.filter((item) => item.result !== null).length,
+      0
+    );
+
+    const summary = {
+      totalStudents: formattedStudents.length,
+      totalSubjects: subjects.length,
+      expectedResults,
+      totalResults: results.length,
+      draft: results.filter((result) => result.status === "draft").length,
+      pendingReview: results.filter(
+        (result) => result.status === "pending_review"
+      ).length,
+      published: results.filter(
+        (result) => result.status === "published"
+      ).length,
+      locked: results.filter((result) => result.status === "locked").length,
+      missing: expectedResults - presentResults,
+    };
+
+    return res.status(200).json({
+      schoolClass: {
+        _id: classRecord._id,
+        name: classRecord.name,
+        arm: classRecord.arm || "",
+      },
+      academicSession: {
+        _id: sessionRecord._id,
+        name: sessionRecord.name,
+      },
+      academicTerm: {
+        _id: termRecord._id,
+        name: termRecord.name,
+      },
+      students: formattedStudents,
+      subjects,
+      matrix,
+      summary,
+    });
+  } catch (error) {
+    console.error("Get admin class results matrix error:", error);
+
+    return res.status(500).json({
+      message:
+        error.message || "Failed to fetch the class results matrix.",
+    });
+  }
+};
+
