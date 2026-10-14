@@ -5,6 +5,8 @@ import AcademicTerm from "../models/AcademicTerm.js";
 import SchoolClass from "../models/SchoolClass.js";
 import Subscription from "../models/Subscription.js";
 import User from "../models/User.js";
+import generateUsername from "../utils/generateUsername.js";
+import {normalizeStudentId, isValidStudentId,} from "../utils/normalizeStudentId.js";
 
 // @desc    Create student
 // @route   POST /api/students
@@ -26,6 +28,15 @@ export const createStudent = async (req, res) => {
       address,
       phone,
     } = req.body;
+
+    const normalizedStudentId = normalizeStudentId(studentId);
+
+if (!isValidStudentId(normalizedStudentId)) {
+  return res.status(400).json({
+    message:
+      "Invalid Student ID. Use the format STU-0001, STU-0002, and so on.",
+  });
+}
 
     if (
       !studentId ||
@@ -160,23 +171,29 @@ export const createStudent = async (req, res) => {
     // --------------------------------------------------
     // Prevent duplicate student ID within the school
     // --------------------------------------------------
-    const existingStudent = await Student.findOne({
-      school: req.user.school,
-      studentId: studentId.trim(),
-    });
+    const existingStudents = await Student.find({
+  school: req.user.school,
+})
+  .select("studentId")
+  .lean();
 
-    if (existingStudent) {
-      return res.status(400).json({
-        message: "A student with this student ID already exists",
-      });
-    }
+const duplicateStudentId = existingStudents.some(
+  (student) =>
+    normalizeStudentId(student.studentId) === normalizedStudentId
+);
+
+if (duplicateStudentId) {
+  return res.status(409).json({
+    message: `Student ID ${normalizedStudentId} already exists in this school.`,
+  });
+}
 
     // --------------------------------------------------
     // Create student
     // --------------------------------------------------
     const student = await Student.create({
       school: req.user.school,
-      studentId: studentId.trim(),
+      studentId: normalizedStudentId,
       firstName: firstName.trim(),
       middleName: middleName?.trim() || "",
       lastName: lastName.trim(),
@@ -210,28 +227,23 @@ export const createStudent = async (req, res) => {
   }
 };
 
-// @desc    Create portal account for an existing student
-// @route   POST /api/students/:id/create-account
-// @access  Private - School Admin
+
 export const createStudentPortalAccount = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password) {
+    if (!password) {
       return res.status(400).json({
-        message: "Email and password are required",
+        message: "A password is required to create the student portal account",
       });
     }
 
-    if (password.length < 6) {
+    if (typeof password !== "string" || password.length < 6) {
       return res.status(400).json({
         message: "Password must be at least 6 characters",
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-
-    // Find the existing student in the admin's school
     const student = await Student.findOne({
       _id: req.params.id,
       school: req.user.school,
@@ -249,67 +261,86 @@ export const createStudentPortalAccount = async (req, res) => {
       });
     }
 
-    // Prevent creating a second portal account
     if (student.user) {
       return res.status(400).json({
         message: "This student already has a portal account",
       });
     }
 
-    // Make sure the email is not already being used
-    const existingUser = await User.findOne({
-      email: normalizedEmail,
-    });
+    const normalizedEmail =
+      typeof email === "string" && email.trim()
+        ? email.trim().toLowerCase()
+        : undefined;
 
-    if (existingUser) {
-      return res.status(400).json({
-        message: "A user with this email already exists",
+    if (normalizedEmail) {
+      const existingUser = await User.findOne({
+        email: normalizedEmail,
       });
+
+      if (existingUser) {
+        return res.status(409).json({
+          message: "This email address is already registered",
+        });
+      }
     }
 
-    // Hash password using the same method as registration
+    const username = await generateUsername(
+      student.firstName,
+      student.lastName
+    );
+
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // Create the student User account
-    const user = await User.create({
+    const userData = {
       firstName: student.firstName,
       lastName: student.lastName,
-      email: normalizedEmail,
+      username,
       password: hashedPassword,
       role: "student",
       school: student.school,
       phone: student.phone || "",
-    });
+    };
 
-    // Link the Student record to the User account
+    if (normalizedEmail) {
+      userData.email = normalizedEmail;
+    }
+
+    const user = await User.create(userData);
+
     student.user = user._id;
-
     await student.save();
 
     return res.status(201).json({
       message: "Student portal account created successfully",
-
       student: {
         id: student._id,
         studentId: student.studentId,
         firstName: student.firstName,
         lastName: student.lastName,
-        user: student.user,
+        user: user._id,
       },
-
       account: {
-        email: user.email,
+        username: user.username,
+        email: user.email || null,
         role: user.role,
       },
     });
   } catch (error) {
     console.error("Create student portal account error:", error);
 
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message:
+          "A username or email conflict occurred. Please try again.",
+      });
+    }
+
     return res.status(500).json({
       message: "Server error while creating student portal account",
     });
   }
 };
+
 
 // @desc    Get all students for school
 // @route   GET /api/students
@@ -544,20 +575,35 @@ export const updateStudent = async (req, res) => {
 
     // Validate student ID if changed
     if (studentId !== undefined) {
-      const existingStudent = await Student.findOne({
-        school: req.user.school,
-        studentId: studentId.trim(),
-        _id: { $ne: student._id },
-      });
+  const normalizedStudentId = normalizeStudentId(studentId);
 
-      if (existingStudent) {
-        return res.status(400).json({
-          message: "A student with this student ID already exists",
-        });
-      }
+  if (!isValidStudentId(normalizedStudentId)) {
+    return res.status(400).json({
+      message:
+        "Invalid Student ID. Use the format STU-0001, STU-0002, and so on.",
+    });
+  }
 
-      student.studentId = studentId.trim();
-    }
+  const existingStudents = await Student.find({
+    school: req.user.school,
+    _id: { $ne: student._id },
+  })
+    .select("studentId")
+    .lean();
+
+  const duplicateStudentId = existingStudents.some(
+    (item) =>
+      normalizeStudentId(item.studentId) === normalizedStudentId
+  );
+
+  if (duplicateStudentId) {
+    return res.status(409).json({
+      message: `Student ID ${normalizedStudentId} already exists in this school.`,
+    });
+  }
+
+  student.studentId = normalizedStudentId;
+}
 
     // Validate parent if changed
     if (parent !== undefined && parent !== null) {

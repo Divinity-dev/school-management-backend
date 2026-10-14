@@ -4,49 +4,72 @@ import Student from "../models/Student.js";
 import Result from "../models/Result.js";
 import StudentFeeAccount from "../models/StudentFeeAccount.js";
 import Payment from "../models/Payment.js";
+import generateUsername from "../utils/generateUsername.js";
 
-const DEFAULT_PARENT_PASSWORD = "password123";
 
+// @desc    Create parent account
+// @route   POST /api/parents
+// @access  Private - School Admin
 export const createParent = async (req, res) => {
   try {
-    const schoolId = req.user?.school?._id || req.user?.school;
+    const {
+      firstName,
+      lastName,
+      email,
+      password,
+      phone,
+    } = req.body;
 
-    const { firstName, lastName, email, phone } = req.body;
+    if (
+      !firstName?.trim() ||
+      !lastName?.trim() ||
+      !password
+    ) {
+      return res.status(400).json({
+        message: "First name, last name and password are required",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    const schoolId = req.user?.school?._id || req.user?.school;
 
     if (!schoolId) {
       return res.status(400).json({
-        message: "School information is missing.",
+        message: "School information is missing from your account",
       });
     }
 
-    if (!firstName || !lastName || !email) {
-      return res.status(400).json({
-        message:
-          "First name, last name, and email are required.",
+    const normalizedEmail = email?.trim().toLowerCase() || undefined;
+
+    if (normalizedEmail) {
+      const existingEmail = await User.findOne({
+        email: normalizedEmail,
       });
+
+      if (existingEmail) {
+        return res.status(409).json({
+          message: "A user with this email already exists",
+        });
+      }
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-
-    const existingUser = await User.findOne({
-      email: normalizedEmail,
-    });
-
-    if (existingUser) {
-      return res.status(400).json({
-        message: "A user with this email already exists.",
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(
-      DEFAULT_PARENT_PASSWORD,
-      12
+    const username = await generateUsername(
+      firstName.trim(),
+      lastName.trim()
     );
+
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     const parent = await User.create({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
-      email: normalizedEmail,
+      username,
+      ...(normalizedEmail ? { email: normalizedEmail } : {}),
       password: hashedPassword,
       role: "parent",
       school: schoolId,
@@ -54,12 +77,13 @@ export const createParent = async (req, res) => {
     });
 
     return res.status(201).json({
-      message: "Parent account created successfully.",
+      message: "Parent account created successfully",
       parent: {
         id: parent._id,
         firstName: parent.firstName,
         lastName: parent.lastName,
-        email: parent.email,
+        username: parent.username,
+        email: parent.email || null,
         phone: parent.phone,
         role: parent.role,
         school: parent.school,
@@ -69,11 +93,19 @@ export const createParent = async (req, res) => {
   } catch (error) {
     console.error("Create parent error:", error);
 
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message:
+          "A username or email conflict occurred. Please try again.",
+      });
+    }
+
     return res.status(500).json({
-      message: "Server error while creating parent account.",
+      message: "Server error while creating parent account",
     });
   }
 };
+
 
 export const linkStudentToParent = async (req, res) => {
   try {

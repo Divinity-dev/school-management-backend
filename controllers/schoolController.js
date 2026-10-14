@@ -628,3 +628,130 @@ export const updateSchoolBankDetails = async (req, res) => {
     });
   }
 };
+
+
+/* =========================================================
+   GET REPORT CARD BRANDING
+========================================================= */
+
+export const getReportCardBranding = async (req, res) => {
+  try {
+    const schoolId = req.user?.school;
+
+    if (!schoolId) {
+      return res.status(400).json({
+        message: "No school is associated with this account",
+      });
+    }
+
+    const school = await School.findById(schoolId).select(
+      "name logo principalSignature principalStamp"
+    );
+
+    if (!school) {
+      return res.status(404).json({
+        message: "School not found",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Report card branding retrieved successfully",
+      branding: {
+        schoolName: school.name,
+        logo: school.logo || "",
+        principalSignature: school.principalSignature || "",
+        principalStamp: school.principalStamp || "",
+      },
+    });
+  } catch (error) {
+    console.error("Get report card branding error:", error);
+
+    return res.status(500).json({
+      message: "Failed to retrieve report card branding",
+    });
+  }
+};
+
+/* =========================================================
+   UPDATE REPORT CARD BRANDING
+========================================================= */
+
+export const updateReportCardBranding = async (req, res) => {
+  try {
+    const schoolId = req.user?.school;
+
+    if (!schoolId) {
+      return res.status(400).json({
+        message: "No school is associated with this account",
+      });
+    }
+
+    const { principalSignature, principalStamp } = req.body;
+
+    if (
+      principalSignature === undefined &&
+      principalStamp === undefined
+    ) {
+      return res.status(400).json({
+        message:
+          "Provide a principal signature or school stamp URL",
+      });
+    }
+
+    for (const [field, value] of Object.entries({
+      principalSignature,
+      principalStamp,
+    })) {
+      if (
+        value !== undefined &&
+        typeof value !== "string"
+      ) {
+        return res.status(400).json({
+          message: `${field} must be a string URL`,
+        });
+      }
+    }
+
+    const school = await School.findById(schoolId);
+
+    if (!school) {
+      return res.status(404).json({
+        message: "School not found",
+      });
+    }
+
+    // An empty string removes an existing image.
+    // An omitted field leaves its existing value unchanged.
+    if (principalSignature !== undefined) {
+      school.principalSignature = principalSignature.trim();
+    }
+
+    if (principalStamp !== undefined) {
+      school.principalStamp = principalStamp.trim();
+    }
+
+    await school.save();
+
+    return res.status(200).json({
+      message: "Report card branding updated successfully",
+      branding: {
+        schoolName: school.name,
+        logo: school.logo || "",
+        principalSignature: school.principalSignature || "",
+        principalStamp: school.principalStamp || "",
+      },
+    });
+  } catch (error) {
+    console.error("Update report card branding error:", error);
+
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        message: error.message,
+      });
+    }
+
+    return res.status(500).json({
+      message: "Failed to update report card branding",
+    });
+  }
+};

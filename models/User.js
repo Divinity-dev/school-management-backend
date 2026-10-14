@@ -14,23 +14,36 @@ const userSchema = new mongoose.Schema(
       trim: true,
     },
 
+    username: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: undefined,
+    },
+
     email: {
       type: String,
-      required: true,
-      unique: true,
       lowercase: true,
       trim: true,
+      default: undefined,
     },
 
     password: {
       type: String,
       required: true,
       minlength: 6,
+      select: true,
     },
 
     role: {
       type: String,
-      enum: ["superAdmin", "schoolAdmin", "teacher", "student", "parent"],
+      enum: [
+        "superAdmin",
+        "schoolAdmin",
+        "teacher",
+        "student",
+        "parent",
+      ],
       required: true,
     },
 
@@ -82,6 +95,28 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+  }
+);
+
+// Usernames must be unique when provided.
+userSchema.index(
+  { username: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      username: { $type: "string" },
+    },
+  }
+);
+
+// Email addresses must be unique when provided.
+userSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      email: { $type: "string" },
+    },
   }
 );
 

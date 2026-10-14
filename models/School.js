@@ -405,6 +405,18 @@ const schoolSchema = new mongoose.Schema(
       trim: true,
     },
 
+    principalSignature: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    principalStamp: {
+  type: String,
+  default: "",
+  trim: true,
+},
+
     logo: {
       type: String,
       default: "",
