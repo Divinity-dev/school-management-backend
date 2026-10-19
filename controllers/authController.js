@@ -295,21 +295,24 @@ export const registerSchool = async (req, res) => {
         createdAdmin.email
       )}`;
 
+      const userManualUrl =
+  "https://docs.google.com/document/d/16R7VEzh1gPUEtyGp2X5PpH2QPfYpvbcNq7m8hxih0Ag/export?format=pdf";
+
     await sendEmail({
       to: createdAdmin.email,
-      subject: "Verify your SchoolManager account",
+      subject: "Verify your SchoolPilot account",
       html: `
         <div style="font-family: Arial, Helvetica, sans-serif; background-color: #f6f8f7; padding: 40px 20px; color: #172322;">
           <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e4e8e6;">
             <div style="background: #173C37; padding: 30px; text-align: center;">
-              <h1 style="margin: 0; color: #ffffff; font-size: 28px;">SchoolManager</h1>
+              <h1 style="margin: 0; color: #ffffff; font-size: 28px;">SchoolPilot</h1>
               <p style="margin: 8px 0 0; color: #63E6BE; font-size: 14px;">Manage your school with confidence</p>
             </div>
 
             <div style="padding: 35px 30px;">
               <p style="font-size: 16px;">Hello ${createdAdmin.firstName},</p>
 
-              <h2 style="color: #173C37; font-size: 22px; margin-top: 25px;">Welcome to SchoolManager</h2>
+              <h2 style="color: #173C37; font-size: 22px; margin-top: 25px;">Welcome to SchoolPilot</h2>
 
               <p style="color: #5f6d68; line-height: 1.7; font-size: 15px;">
                 Your school administrator account for
@@ -342,6 +345,31 @@ export const registerSchool = async (req, res) => {
                   <li>Start managing your school.</li>
                 </ol>
               </div>
+              
+<div style="background: #f6f8f7; border: 1px solid #dce9e3; border-radius: 12px; padding: 24px; margin-top: 25px; text-align: center;">
+  <h3 style="margin-top: 0; color: #173C37; font-size: 18px;">
+    Your SchoolPilot User Manual
+  </h3>
+
+  <p style="color: #5f6d68; line-height: 1.7; font-size: 14px;">
+    Get to know SchoolPilot and learn how to manage your school's
+    students, staff, attendance, assignments, results, fees,
+    subscriptions, and other features.
+  </p>
+
+  <a
+    href="${userManualUrl}"
+    target="_blank"
+    style="display: inline-block; background: #173C37; color: #ffffff; text-decoration: none; padding: 14px 24px; border-radius: 8px; font-weight: bold; font-size: 14px;"
+  >
+    Download User Manual (PDF)
+  </a>
+
+  <p style="color: #7b8783; font-size: 12px; margin-bottom: 0;">
+    Keep a copy of this guide for future reference.
+  </p>
+</div>
+
 
               <p style="color: #7b8783; font-size: 13px; line-height: 1.6; margin-top: 30px;">
                 This verification link will expire in <strong>24 hours</strong>.
@@ -353,13 +381,13 @@ export const registerSchool = async (req, res) => {
 
               <p style="margin-top: 30px; color: #53635e; line-height: 1.6;">
                 Best regards,<br />
-                <strong>The SchoolManager Team</strong>
+                <strong>The SchoolPilot Team</strong>
               </p>
             </div>
 
             <div style="background: #f6f8f7; padding: 20px 30px; text-align: center;">
               <p style="margin: 0; color: #8a9591; font-size: 12px;">
-                © ${new Date().getFullYear()} SchoolManager. All rights reserved.
+                © ${new Date().getFullYear()} SchoolPilot. All rights reserved.
               </p>
             </div>
           </div>
@@ -632,7 +660,7 @@ export const forgotPassword = async (req, res) => {
     // Send OTP email
     await sendEmail({
       to: user.email,
-      subject: "Your SchoolManager password reset code",
+      subject: "Your SchoolPilot password reset code",
       html: `
         <div style="
           font-family: Arial, Helvetica, sans-serif;
@@ -661,7 +689,7 @@ export const forgotPassword = async (req, res) => {
                 color: #ffffff;
                 font-size: 28px;
               ">
-                SchoolManager
+                SchoolPilot
               </h1>
 
               <p style="
@@ -694,7 +722,7 @@ export const forgotPassword = async (req, res) => {
                 font-size: 15px;
               ">
                 We received a request to reset the password for your
-                SchoolManager account.
+                SchoolPilot account.
               </p>
 
               <p style="
@@ -762,7 +790,7 @@ export const forgotPassword = async (req, res) => {
                 line-height: 1.6;
               ">
                 Best regards,<br />
-                <strong>The SchoolManager Team</strong>
+                <strong>The SchoolPilot Team</strong>
               </p>
 
             </div>
@@ -779,7 +807,7 @@ export const forgotPassword = async (req, res) => {
                 font-size: 12px;
               ">
                 © ${new Date().getFullYear()}
-                SchoolManager. All rights reserved.
+                SchoolPilot. All rights reserved.
               </p>
 
             </div>
