@@ -41,6 +41,8 @@ app.use(
   })
 );
 
+console.log(process.env.FRONTEND_URL)
+
 /*
  * Paystack webhook
  *
