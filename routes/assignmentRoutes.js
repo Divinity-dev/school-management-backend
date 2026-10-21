@@ -12,7 +12,7 @@ import {
   publishAssignment,
   closeAssignment,
   getAssignment,
-updateAssignment,
+  updateAssignment,
 } from "../controllers/assignmentController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
@@ -20,7 +20,12 @@ import { requireActiveSubscription } from "../middleware/subscriptionMiddleware.
 
 const router = express.Router();
 
-// Create assignment
+/*
+|--------------------------------------------------------------------------
+| Create Assignment
+|--------------------------------------------------------------------------
+*/
+
 router.post(
   "/",
   protect,
@@ -28,7 +33,12 @@ router.post(
   createAssignment
 );
 
-// Teacher assignment portal
+/*
+|--------------------------------------------------------------------------
+| Teacher Assignment Portal
+|--------------------------------------------------------------------------
+*/
+
 router.get(
   "/teacher",
   protect,
@@ -36,7 +46,12 @@ router.get(
   getTeacherAssignments
 );
 
-// Student assignment portal
+/*
+|--------------------------------------------------------------------------
+| Student Assignment Portal
+|--------------------------------------------------------------------------
+*/
+
 router.get(
   "/student",
   protect,
@@ -44,7 +59,41 @@ router.get(
   getStudentAssignments
 );
 
-router.get("/:assignmentId", protect, requireActiveSubscription, getAssignment);
+/*
+|--------------------------------------------------------------------------
+| Student's Own Submission / Result
+|--------------------------------------------------------------------------
+|
+| This route MUST come before /:assignmentId.
+| Otherwise Express may match "my-submission" incorrectly.
+|
+*/
+
+router.get(
+  "/:assignmentId/my-submission",
+  protect,
+  requireActiveSubscription,
+  getStudentAssignmentSubmission
+);
+
+/*
+|--------------------------------------------------------------------------
+| Single Assignment
+|--------------------------------------------------------------------------
+*/
+
+router.get(
+  "/:assignmentId",
+  protect,
+  requireActiveSubscription,
+  getAssignment
+);
+
+/*
+|--------------------------------------------------------------------------
+| Update Assignment
+|--------------------------------------------------------------------------
+*/
 
 router.put(
   "/:assignmentId",
@@ -53,16 +102,12 @@ router.put(
   updateAssignment
 );
 
-// Student's own submission/result
-router.get(
-  "/:assignmentId/my-submission",
-  protect,
-  requireActiveSubscription,
-  getStudentAssignmentSubmission
-);
+/*
+|--------------------------------------------------------------------------
+| Publish Assignment
+|--------------------------------------------------------------------------
+*/
 
-
-// Publish assignment
 router.patch(
   "/:assignmentId/publish",
   protect,
@@ -70,7 +115,12 @@ router.patch(
   publishAssignment
 );
 
-// Close assignment
+/*
+|--------------------------------------------------------------------------
+| Close Assignment
+|--------------------------------------------------------------------------
+*/
+
 router.patch(
   "/:assignmentId/close",
   protect,
@@ -78,7 +128,12 @@ router.patch(
   closeAssignment
 );
 
-// Student submission
+/*
+|--------------------------------------------------------------------------
+| Student Submission
+|--------------------------------------------------------------------------
+*/
+
 router.post(
   "/:assignmentId/submit",
   protect,
@@ -86,7 +141,12 @@ router.post(
   submitAssignment
 );
 
-// Teacher/admin submission management
+/*
+|--------------------------------------------------------------------------
+| Teacher/Admin Submission Management
+|--------------------------------------------------------------------------
+*/
+
 router.get(
   "/:assignmentId/submissions",
   protect,

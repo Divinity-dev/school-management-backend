@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 
 import User from "../models/User.js";
 import School from "../models/School.js";
-
+import generateUsername from "../utils/generateUsername.js";
 import { sendEmail } from "../utils/sendEmail.js";
 
 
@@ -38,6 +38,7 @@ const generatePasswordResetOtp = () => {
 };
 
 // Existing student registration
+
 export const register = async (req, res) => {
   try {
     const {
@@ -49,20 +50,32 @@ export const register = async (req, res) => {
       phone,
     } = req.body;
 
-    if (!firstName || !lastName || !email || !password || !schoolId) {
+    if (
+      !firstName?.trim() ||
+      !lastName?.trim() ||
+      !email?.trim() ||
+      !password ||
+      !schoolId
+    ) {
       return res.status(400).json({
         message: "Please provide all required fields",
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    if (typeof password !== "string" || password.length < 6) {
+      return res.status(400).json({
+        message: "Password must be at least 6 characters long",
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
 
     const existingUser = await User.findOne({
       email: normalizedEmail,
     });
 
     if (existingUser) {
-      return res.status(400).json({
+      return res.status(409).json({
         message: "A user with this email already exists",
       });
     }
@@ -81,16 +94,22 @@ export const register = async (req, res) => {
       });
     }
 
+    const username = await generateUsername(
+      firstName.trim(),
+      lastName.trim()
+    );
+
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await User.create({
-      firstName,
-      lastName,
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      username,
       email: normalizedEmail,
       password: hashedPassword,
       role: "student",
       school: school._id,
-      phone,
+      phone: typeof phone === "string" ? phone.trim() : "",
     });
 
     const token = generateToken(user._id);
@@ -102,6 +121,7 @@ export const register = async (req, res) => {
         id: user._id,
         firstName: user.firstName,
         lastName: user.lastName,
+        username: user.username,
         email: user.email,
         role: user.role,
         school: user.school,
@@ -110,21 +130,27 @@ export const register = async (req, res) => {
   } catch (error) {
     console.error("Registration error:", error);
 
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message:
+          "A username or email conflict occurred. Please try again.",
+      });
+    }
+
     return res.status(500).json({
       message: "Server error during registration",
     });
   }
 };
 
+
 // School registration
+
 export const registerSchool = async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
-    const {
-      school: schoolData,
-      admin: adminData,
-    } = req.body;
+    const { school: schoolData, admin: adminData } = req.body;
 
     if (!schoolData || !adminData) {
       return res.status(400).json({
@@ -152,11 +178,11 @@ export const registerSchool = async (req, res) => {
     } = adminData;
 
     if (
-      !schoolName ||
-      !schoolEmail ||
-      !firstName ||
-      !lastName ||
-      !adminEmail ||
+      !schoolName?.trim() ||
+      !schoolEmail?.trim() ||
+      !firstName?.trim() ||
+      !lastName?.trim() ||
+      !adminEmail?.trim() ||
       !password
     ) {
       return res.status(400).json({
@@ -165,12 +191,19 @@ export const registerSchool = async (req, res) => {
       });
     }
 
-    const normalizedSchoolEmail = schoolEmail.toLowerCase().trim();
-    const normalizedAdminEmail = adminEmail.toLowerCase().trim();
-
-    if (password.length < 8) {
+    if (typeof password !== "string" || password.length < 8) {
       return res.status(400).json({
         message: "Password must be at least 8 characters long",
+      });
+    }
+
+    const normalizedSchoolEmail = schoolEmail.trim().toLowerCase();
+    const normalizedAdminEmail = adminEmail.trim().toLowerCase();
+
+    if (normalizedSchoolEmail === normalizedAdminEmail) {
+      return res.status(400).json({
+        message:
+          "The school email and administrator email must be different",
       });
     }
 
@@ -179,7 +212,7 @@ export const registerSchool = async (req, res) => {
     });
 
     if (existingSchool) {
-      return res.status(400).json({
+      return res.status(409).json({
         message: "A school with this email already exists",
       });
     }
@@ -189,20 +222,23 @@ export const registerSchool = async (req, res) => {
     });
 
     if (existingUser) {
-      return res.status(400).json({
+      return res.status(409).json({
         message: "A user with this email already exists",
       });
     }
 
+    const adminUsername = await generateUsername(
+      firstName.trim(),
+      lastName.trim()
+    );
+
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // Generate email verification token
     const {
       rawToken: verificationToken,
       hashedToken: hashedVerificationToken,
     } = generateEmailVerificationToken();
 
-    // Token expires after 24 hours
     const verificationTokenExpires = new Date(
       Date.now() + 24 * 60 * 60 * 1000
     );
@@ -234,6 +270,7 @@ export const registerSchool = async (req, res) => {
           {
             firstName: firstName.trim(),
             lastName: lastName.trim(),
+            username: adminUsername,
             email: normalizedAdminEmail,
             password: hashedPassword,
             role: "schoolAdmin",
@@ -253,194 +290,107 @@ export const registerSchool = async (req, res) => {
       createdAdmin = admins[0];
     });
 
-    // Verification link
     const verificationUrl =
       `${process.env.BACKEND_URL}/api/auth/verify-email?token=${verificationToken}&email=${encodeURIComponent(
         createdAdmin.email
       )}`;
 
-    // Send verification email
+      const userManualUrl =
+  "https://docs.google.com/document/d/16R7VEzh1gPUEtyGp2X5PpH2QPfYpvbcNq7m8hxih0Ag/export?format=pdf";
+
     await sendEmail({
       to: createdAdmin.email,
-      subject: "Verify your SchoolManager account",
+      subject: "Verify your SchoolPilot account",
       html: `
-        <div style="
-          font-family: Arial, Helvetica, sans-serif;
-          background-color: #f6f8f7;
-          padding: 40px 20px;
-          color: #172322;
-        ">
-
-          <div style="
-            max-width: 600px;
-            margin: 0 auto;
-            background: #ffffff;
-            border-radius: 16px;
-            overflow: hidden;
-            border: 1px solid #e4e8e6;
-          ">
-
-            <div style="
-              background: #173C37;
-              padding: 30px;
-              text-align: center;
-            ">
-
-              <h1 style="
-                margin: 0;
-                color: #ffffff;
-                font-size: 28px;
-              ">
-                SchoolManager
-              </h1>
-
-              <p style="
-                margin: 8px 0 0;
-                color: #63E6BE;
-                font-size: 14px;
-              ">
-                Manage your school with confidence
-              </p>
-
+        <div style="font-family: Arial, Helvetica, sans-serif; background-color: #f6f8f7; padding: 40px 20px; color: #172322;">
+          <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #e4e8e6;">
+            <div style="background: #173C37; padding: 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 28px;">SchoolPilot</h1>
+              <p style="margin: 8px 0 0; color: #63E6BE; font-size: 14px;">Manage your school with confidence</p>
             </div>
 
             <div style="padding: 35px 30px;">
+              <p style="font-size: 16px;">Hello ${createdAdmin.firstName},</p>
 
-              <p style="font-size: 16px;">
-                Hello ${createdAdmin.firstName},
-              </p>
+              <h2 style="color: #173C37; font-size: 22px; margin-top: 25px;">Welcome to SchoolPilot</h2>
 
-              <h2 style="
-                color: #173C37;
-                font-size: 22px;
-                margin-top: 25px;
-              ">
-                Welcome to SchoolManager
-              </h2>
-
-              <p style="
-                color: #5f6d68;
-                line-height: 1.7;
-                font-size: 15px;
-              ">
+              <p style="color: #5f6d68; line-height: 1.7; font-size: 15px;">
                 Your school administrator account for
                 <strong>${createdSchool.name}</strong>
                 has been created successfully.
               </p>
 
-              <p style="
-                color: #5f6d68;
-                line-height: 1.7;
-                font-size: 15px;
-              ">
-                Before you can log in, please verify your email
-                address by clicking the button below.
+              <p style="color: #5f6d68; line-height: 1.7; font-size: 15px;">
+                Your login username is:
+                <strong>${createdAdmin.username}</strong>
               </p>
 
-              <div style="
-                text-align: center;
-                margin: 30px 0;
-              ">
+              <p style="color: #5f6d68; line-height: 1.7; font-size: 15px;">
+                Before you can log in, please verify your email address by clicking the button below.
+              </p>
 
-                <a
-                  href="${verificationUrl}"
-                  style="
-                    display: inline-block;
-                    background: #173C37;
-                    color: #ffffff;
-                    text-decoration: none;
-                    padding: 14px 26px;
-                    border-radius: 10px;
-                    font-weight: bold;
-                    font-size: 15px;
-                  "
-                >
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${verificationUrl}" style="display: inline-block; background: #173C37; color: #ffffff; text-decoration: none; padding: 14px 26px; border-radius: 10px; font-weight: bold; font-size: 15px;">
                   Verify Now
                 </a>
-
               </div>
 
-              <div style="
-                background: #E1F5ED;
-                border-radius: 12px;
-                padding: 20px;
-                margin-top: 30px;
-              ">
-
-                <h3 style="
-                  margin-top: 0;
-                  color: #173C37;
-                  font-size: 17px;
-                ">
-                  Getting started
-                </h3>
-
-                <ol style="
-                  color: #53635e;
-                  line-height: 1.8;
-                  padding-left: 20px;
-                  font-size: 14px;
-                ">
-
+              <div style="background: #E1F5ED; border-radius: 12px; padding: 20px; margin-top: 30px;">
+                <h3 style="margin-top: 0; color: #173C37; font-size: 17px;">Getting started</h3>
+                <ol style="color: #53635e; line-height: 1.8; padding-left: 20px; font-size: 14px;">
                   <li>Verify your email address.</li>
-                  <li>Log in to your school administrator account.</li>
+                  <li>Log in using your email address or username.</li>
                   <li>Set up your academic sessions and terms.</li>
                   <li>Add teachers, students and parents.</li>
                   <li>Start managing your school.</li>
-
                 </ol>
-
               </div>
+              
+<div style="background: #f6f8f7; border: 1px solid #dce9e3; border-radius: 12px; padding: 24px; margin-top: 25px; text-align: center;">
+  <h3 style="margin-top: 0; color: #173C37; font-size: 18px;">
+    Your SchoolPilot User Manual
+  </h3>
 
-              <p style="
-                color: #7b8783;
-                font-size: 13px;
-                line-height: 1.6;
-                margin-top: 30px;
-              ">
-                This verification link will expire in
-                <strong>24 hours</strong>.
+  <p style="color: #5f6d68; line-height: 1.7; font-size: 14px;">
+    Get to know SchoolPilot and learn how to manage your school's
+    students, staff, attendance, assignments, results, fees,
+    subscriptions, and other features.
+  </p>
+
+  <a
+    href="${userManualUrl}"
+    target="_blank"
+    style="display: inline-block; background: #173C37; color: #ffffff; text-decoration: none; padding: 14px 24px; border-radius: 8px; font-weight: bold; font-size: 14px;"
+  >
+    Download User Manual (PDF)
+  </a>
+
+  <p style="color: #7b8783; font-size: 12px; margin-bottom: 0;">
+    Keep a copy of this guide for future reference.
+  </p>
+</div>
+
+
+              <p style="color: #7b8783; font-size: 13px; line-height: 1.6; margin-top: 30px;">
+                This verification link will expire in <strong>24 hours</strong>.
               </p>
 
-              <p style="
-                color: #7b8783;
-                font-size: 13px;
-                line-height: 1.6;
-              ">
-                If you did not create this account, you can safely
-                ignore this email.
+              <p style="color: #7b8783; font-size: 13px; line-height: 1.6;">
+                If you did not create this account, you can safely ignore this email.
               </p>
 
-              <p style="
-                margin-top: 30px;
-                color: #53635e;
-                line-height: 1.6;
-              ">
+              <p style="margin-top: 30px; color: #53635e; line-height: 1.6;">
                 Best regards,<br />
-                <strong>The SchoolManager Team</strong>
+                <strong>The SchoolPilot Team</strong>
               </p>
-
             </div>
 
-            <div style="
-              background: #f6f8f7;
-              padding: 20px 30px;
-              text-align: center;
-            ">
-
-              <p style="
-                margin: 0;
-                color: #8a9591;
-                font-size: 12px;
-              ">
-                © ${new Date().getFullYear()}
-                SchoolManager. All rights reserved.
+            <div style="background: #f6f8f7; padding: 20px 30px; text-align: center;">
+              <p style="margin: 0; color: #8a9591; font-size: 12px;">
+                © ${new Date().getFullYear()} SchoolPilot. All rights reserved.
               </p>
-
             </div>
-
           </div>
-
         </div>
       `,
     });
@@ -458,6 +408,7 @@ export const registerSchool = async (req, res) => {
         id: createdAdmin._id,
         firstName: createdAdmin.firstName,
         lastName: createdAdmin.lastName,
+        username: createdAdmin.username,
         email: createdAdmin.email,
         role: createdAdmin.role,
         school: createdAdmin.school,
@@ -466,6 +417,13 @@ export const registerSchool = async (req, res) => {
   } catch (error) {
     console.error("School registration error:", error);
 
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message:
+          "A username, school email, or administrator email conflict occurred. Please try again.",
+      });
+    }
+
     return res.status(500).json({
       message: "Server error during school registration",
     });
@@ -473,6 +431,7 @@ export const registerSchool = async (req, res) => {
     await session.endSession();
   }
 };
+
 
 // Verify school administrator email
 export const verifyEmail = async (req, res) => {
@@ -548,63 +507,78 @@ export const verifyEmail = async (req, res) => {
   }
 };
 
-// Login
+
+// @desc    Login using email or username
+// @route   POST /api/auth/login
+// @access  Public
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { identifier, email, password } = req.body;
 
-    if (!email || !password) {
+    // Support both the new "identifier" field and existing clients
+    // that still send "email".
+    const loginIdentifier = (identifier || email || "")
+      .trim()
+      .toLowerCase();
+
+    if (!loginIdentifier || !password) {
       return res.status(400).json({
-        message: "Email and password are required",
+        message: "Username or email and password are required",
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
-
+    // Find the account by username or email.
     const user = await User.findOne({
-      email: normalizedEmail,
+      $or: [
+        { username: loginIdentifier },
+        { email: loginIdentifier },
+      ],
     }).populate("school", "name isActive");
 
     if (!user) {
       return res.status(401).json({
-        message: "Invalid email or password",
+        message: "Invalid username/email or password",
       });
     }
 
-    const isPasswordCorrect = await bcrypt.compare(
+    // Verify the supplied password.
+    const isPasswordValid = await bcrypt.compare(
       password,
       user.password
     );
 
-    if (!isPasswordCorrect) {
+    if (!isPasswordValid) {
       return res.status(401).json({
-        message: "Invalid email or password",
+        message: "Invalid username/email or password",
       });
     }
 
+    // Prevent inactive accounts from logging in.
     if (!user.isActive) {
       return res.status(403).json({
         message: "Your account has been deactivated",
       });
     }
 
-    if (user.school && !user.school.isActive) {
+    // Prevent users belonging to inactive schools from logging in.
+    if (
+      user.school &&
+      user.school.isActive === false
+    ) {
       return res.status(403).json({
         message: "This school is currently inactive",
       });
     }
 
-    // Email verification is required only for school admins
-    // created through public school registration.
+    // School administrators must verify their email first.
     if (
       user.role === "schoolAdmin" &&
       !user.isEmailVerified
     ) {
       return res.status(403).json({
-        message:
-          "Please verify your email address before logging in.",
-        emailVerificationRequired: true,
         code: "EMAIL_NOT_VERIFIED",
+        message:
+          "Please verify your email address before logging in",
       });
     }
 
@@ -617,9 +591,15 @@ export const login = async (req, res) => {
         id: user._id,
         firstName: user.firstName,
         lastName: user.lastName,
-        email: user.email,
+        username: user.username || null,
+        email: user.email || null,
         role: user.role,
-        school: user.school,
+        school: user.school
+          ? {
+              id: user.school._id,
+              name: user.school.name,
+            }
+          : null,
       },
     });
   } catch (error) {
@@ -631,7 +611,8 @@ export const login = async (req, res) => {
   }
 };
 
-// Forgot password
+
+
 // Forgot password
 export const forgotPassword = async (req, res) => {
   try {
@@ -679,7 +660,7 @@ export const forgotPassword = async (req, res) => {
     // Send OTP email
     await sendEmail({
       to: user.email,
-      subject: "Your SchoolManager password reset code",
+      subject: "Your SchoolPilot password reset code",
       html: `
         <div style="
           font-family: Arial, Helvetica, sans-serif;
@@ -708,7 +689,7 @@ export const forgotPassword = async (req, res) => {
                 color: #ffffff;
                 font-size: 28px;
               ">
-                SchoolManager
+                SchoolPilot
               </h1>
 
               <p style="
@@ -741,7 +722,7 @@ export const forgotPassword = async (req, res) => {
                 font-size: 15px;
               ">
                 We received a request to reset the password for your
-                SchoolManager account.
+                SchoolPilot account.
               </p>
 
               <p style="
@@ -809,7 +790,7 @@ export const forgotPassword = async (req, res) => {
                 line-height: 1.6;
               ">
                 Best regards,<br />
-                <strong>The SchoolManager Team</strong>
+                <strong>The SchoolPilot Team</strong>
               </p>
 
             </div>
@@ -826,7 +807,7 @@ export const forgotPassword = async (req, res) => {
                 font-size: 12px;
               ">
                 © ${new Date().getFullYear()}
-                SchoolManager. All rights reserved.
+                SchoolPilot. All rights reserved.
               </p>
 
             </div>

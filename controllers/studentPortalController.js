@@ -3,22 +3,17 @@ import Assignment from "../models/Assignment.js";
 import AssignmentSubmission from "../models/AssignmentSubmission.js";
 import Attendance from "../models/Attendance.js";
 import AcademicTerm from "../models/AcademicTerm.js";
+import StudentFeeAccount from "../models/StudentFeeAccount.js";
+import Result from "../models/Result.js";
 
 export const getStudentDashboard = async (req, res) => {
   try {
-    // Only students can access the student portal dashboard.
     if (req.user.role !== "student") {
       return res.status(403).json({
         message: "Only students can access the student portal.",
       });
     }
 
-    /*
-     * Find the student record linked to the logged-in user.
-     *
-     * We explicitly include the user's school to enforce
-     * school-level isolation.
-     */
     const student = await Student.findOne({
       user: req.user._id,
       school: req.user.school,
@@ -35,9 +30,6 @@ export const getStudentDashboard = async (req, res) => {
       });
     }
 
-    /*
-     * Validate required academic references.
-     */
     if (
       !student.school ||
       !student.schoolClass ||
@@ -49,10 +41,6 @@ export const getStudentDashboard = async (req, res) => {
       });
     }
 
-    /*
-     * Get the current active academic term for the student's school
-     * and academic session.
-     */
     const currentTerm = await AcademicTerm.findOne({
       school: student.school._id,
       academicSession: student.academicSession._id,
@@ -60,22 +48,12 @@ export const getStudentDashboard = async (req, res) => {
       isActive: true,
     }).select("_id name startDate endDate");
 
-    /*
-     * If there is no current term, the dashboard can still return
-     * the student's basic profile, but academic dashboard data should
-     * remain empty rather than querying unrelated terms.
-     */
     let assignments = [];
     let attendanceRecords = [];
+    let feeAccount = null;
+    let results = [];
 
     if (currentTerm) {
-      /*
-       * Get published assignments for this student's:
-       * - school
-       * - academic session
-       * - current term
-       * - class
-       */
       assignments = await Assignment.find({
         school: student.school._id,
         academicSession: student.academicSession._id,
@@ -88,10 +66,6 @@ export const getStudentDashboard = async (req, res) => {
         .populate("teacher", "firstName lastName")
         .sort({ dueDate: 1, createdAt: -1 });
 
-      /*
-       * Get this student's attendance records for the
-       * current academic term.
-       */
       attendanceRecords = await Attendance.find({
         school: student.school._id,
         academicSession: student.academicSession._id,
@@ -101,10 +75,46 @@ export const getStudentDashboard = async (req, res) => {
       })
         .populate("term", "name startDate endDate")
         .sort({ date: -1 });
+
+      /*
+       * Student fees
+       */
+      feeAccount = await StudentFeeAccount.findOne({
+        school: student.school._id,
+        student: student._id,
+        academicSession: student.academicSession._id,
+        academicTerm: currentTerm._id,
+        isActive: true,
+      })
+        .populate(
+          "feeStructure",
+          "items totalAmount isActive schoolClasses"
+        )
+        .populate("academicSession", "name")
+        .populate("academicTerm", "name");
+
+      /*
+       * Student results
+       *
+       * Students should only see results that have been
+       * published or locked.
+       */
+      results = await Result.find({
+        school: student.school._id,
+        student: student._id,
+        academicSession: student.academicSession._id,
+        academicTerm: currentTerm._id,
+        status: { $in: ["published", "locked"] },
+      })
+        .populate("subject", "name code")
+        .populate("schoolClass", "name arm section")
+        .populate("academicSession", "name")
+        .populate("academicTerm", "name")
+        .sort({ createdAt: -1 });
     }
 
     /*
-     * Get this student's assignment submissions.
+     * Assignment submissions
      */
     const assignmentIds = assignments.map(
       (assignment) => assignment._id
@@ -130,9 +140,6 @@ export const getStudentDashboard = async (req, res) => {
       );
     });
 
-    /*
-     * Add submission information to assignments.
-     */
     const assignmentsWithSubmission = assignments.map(
       (assignment) => {
         const submission = submissionMap.get(
@@ -141,7 +148,6 @@ export const getStudentDashboard = async (req, res) => {
 
         return {
           ...assignment.toObject(),
-
           submission: submission
             ? {
                 _id: submission._id,
@@ -151,7 +157,6 @@ export const getStudentDashboard = async (req, res) => {
                 status: submission.status,
               }
             : null,
-
           submissionStatus: submission
             ? submission.status
             : "not_submitted",
@@ -160,9 +165,10 @@ export const getStudentDashboard = async (req, res) => {
     );
 
     /*
-     * Assignment statistics.
+     * Assignment statistics
      */
-    const totalAssignments = assignmentsWithSubmission.length;
+    const totalAssignments =
+      assignmentsWithSubmission.length;
 
     const submittedAssignments =
       assignmentsWithSubmission.filter(
@@ -184,7 +190,7 @@ export const getStudentDashboard = async (req, res) => {
       ).length;
 
     /*
-     * Attendance statistics.
+     * Attendance statistics
      */
     const attendanceStats = {
       total: attendanceRecords.length,
@@ -212,7 +218,6 @@ export const getStudentDashboard = async (req, res) => {
       }
     });
 
-    // Late counts as attendance.
     attendanceStats.attended =
       attendanceStats.present + attendanceStats.late;
 
@@ -228,8 +233,85 @@ export const getStudentDashboard = async (req, res) => {
         : 0;
 
     /*
-     * Return student dashboard.
+     * Fee information
      */
+    const fees = feeAccount
+      ? {
+          _id: feeAccount._id,
+          totalAmountDue: Number(
+            feeAccount.totalAmountDue || 0
+          ),
+          amountPaid: Number(feeAccount.amountPaid || 0),
+          balance: Number(feeAccount.balance || 0),
+          status: feeAccount.status,
+          academicSession: feeAccount.academicSession,
+          academicTerm: feeAccount.academicTerm,
+          feeStructure: feeAccount.feeStructure
+            ? {
+                _id: feeAccount.feeStructure._id,
+                totalAmount: Number(
+                  feeAccount.feeStructure.totalAmount || 0
+                ),
+                items: Array.isArray(
+                  feeAccount.feeStructure.items
+                )
+                  ? feeAccount.feeStructure.items
+                  : [],
+              }
+            : null,
+        }
+      : null;
+
+    /*
+     * Result information
+     */
+    const formattedResults = results.map((result) => ({
+      _id: result._id,
+      subject: result.subject,
+      schoolClass: result.schoolClass,
+      academicSession: result.academicSession,
+      academicTerm: result.academicTerm,
+      caScore: Number(result.caScore || 0),
+      examScore: Number(result.examScore || 0),
+      total: Number(result.total || 0),
+      grade: result.grade || "",
+      remark: result.remark || "",
+      status: result.status,
+    }));
+
+    const resultTotals = formattedResults.map(
+      (result) => result.total
+    );
+
+    const resultAverage =
+      resultTotals.length > 0
+        ? Number(
+            (
+              resultTotals.reduce(
+                (sum, score) => sum + score,
+                0
+              ) / resultTotals.length
+            ).toFixed(2)
+          )
+        : 0;
+
+    const highestResult =
+      resultTotals.length > 0
+        ? Math.max(...resultTotals)
+        : 0;
+
+    const lowestResult =
+      resultTotals.length > 0
+        ? Math.min(...resultTotals)
+        : 0;
+
+    const resultStats = {
+      totalSubjects: formattedResults.length,
+      average: resultAverage,
+      highest: highestResult,
+      lowest: lowestResult,
+    };
+
     return res.status(200).json({
       student: {
         _id: student._id,
@@ -264,6 +346,13 @@ export const getStudentDashboard = async (req, res) => {
 
       attendance: attendanceStats,
 
+      fees,
+
+      results: {
+        stats: resultStats,
+        items: formattedResults,
+      },
+
       recentAssignments:
         assignmentsWithSubmission.slice(0, 5),
 
@@ -277,13 +366,19 @@ export const getStudentDashboard = async (req, res) => {
           term: record.term,
         })),
 
+      recentResults: formattedResults.slice(0, 5),
+
       assignments: assignmentsWithSubmission,
     });
   } catch (error) {
-    console.error("Get student dashboard error:", error);
+    console.error(
+      "Get student dashboard error:",
+      error
+    );
 
     return res.status(500).json({
-      message: "Server error while fetching student dashboard.",
+      message:
+        "Server error while fetching student dashboard.",
     });
   }
 };
