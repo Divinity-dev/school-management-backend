@@ -1,5 +1,7 @@
+
 import "dotenv/config";
 import express from "express";
+import cors from "cors";
 import connectDB from "./config/db.js";
 
 import authRoutes from "./routes/authRoutes.js";
@@ -28,42 +30,49 @@ import publicSchoolRoutes from "./routes/publicSchoolRoutes.js";
 import schoolPostRoutes from "./routes/schoolPostRoutes.js";
 import superAdminRoutes from "./routes/superAdminRoutes.js";
 import classTeacherRemarkRoutes from "./routes/classTeacherRemarkRoutes.js";
-import cors from "cors";
-
-
 
 const app = express();
 
+// CORS
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin:
+      process.env.FRONTEND_URL || "http://localhost:3000",
     credentials: true,
   })
 );
 
-console.log(process.env.FRONTEND_URL)
-
-/*
- * Paystack webhook
- *
- * This route must receive the raw request body so that
- * Paystack's x-paystack-signature can be verified correctly.
- */
+// Paystack webhook must receive the raw body for signature verification.
+// Keep this before express.json().
 app.use(
   "/api/payments/webhook",
   express.raw({ type: "application/json" })
 );
 
-// Normal JSON parsing for all other requests
+// Parse JSON for other requests.
 app.use(express.json());
 
+// Request logging
 app.use((req, res, next) => {
   console.log("REQUEST:", req.method, req.originalUrl);
   next();
 });
 
-// routes
+// Ensure MongoDB is connected before handling API requests.
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    console.error("Database connection failed:", error.message);
 
+    return res.status(503).json({
+      message: "Database connection is temporarily unavailable.",
+    });
+  }
+});
+
+// API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/schools", schoolRoutes);
 app.use("/api/school-admins", schoolAdminRoutes);
@@ -90,11 +99,15 @@ app.use("/api/public", publicSchoolRoutes);
 app.use("/api/public", schoolPostRoutes);
 app.use("/api/super-admin", superAdminRoutes);
 app.use("/api/class-teacher-remarks", classTeacherRemarkRoutes);
-connectDB();
 
-const PORT = process.env.PORT || 5000;
+// Export the app for Vercel.
+export default app;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Start the standalone server for local development.
+if (process.env.NODE_ENV !== "production") {
+  const PORT = process.env.PORT || 5000;
 
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
