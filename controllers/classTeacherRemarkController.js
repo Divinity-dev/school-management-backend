@@ -245,8 +245,10 @@ export const getClassTeacherRemarks = async (req, res) => {
         schoolClass,
         isActive: true,
       })
-        .select("_id studentId admissionNumber user schoolClass")
-        .populate("user", "firstName middleName lastName")
+        .select(
+  "_id studentId admissionNumber firstName middleName lastName name fullName user schoolClass"
+)
+.populate("user", "firstName middleName lastName name")
         .sort({ createdAt: 1 })
         .lean(),
 
@@ -341,30 +343,78 @@ export const getClassTeacherRemarks = async (req, res) => {
       });
     }
 
-    const roster = students.map((student) => {
-      const studentKey = student._id.toString();
-      const savedRemark = remarkMap.get(studentKey);
+    
+const roster = students.map((student) => {
+  const studentKey = student._id.toString();
+  const savedRemark = remarkMap.get(studentKey);
 
-      return {
-        student: {
-          _id: student._id,
-          studentId: student.studentId || "",
-          admissionNumber: student.admissionNumber || "",
-          firstName: student.user?.firstName || "",
-          middleName: student.user?.middleName || "",
-          lastName: student.user?.lastName || "",
-        },
-        remark: savedRemark?.remark || "",
-        remarkId: savedRemark?._id || null,
-        updatedAt: savedRemark?.updatedAt || null,
-        submittedAt: savedRemark?.submittedAt || null,
-        attendanceOverride: normalizeAttendanceOverride(
-          savedRemark?.attendanceOverride
-        ),
-        onlineAttendance: attendanceMap.get(studentKey) || emptyAttendance(),
-        results: resultsMap.get(studentKey) || [],
-      };
-    });
+  // Student names may be stored directly on Student or on its linked User.
+  const user =
+    student.user && typeof student.user === "object"
+      ? student.user
+      : {};
+
+  const firstName =
+    student.firstName ||
+    student.first_name ||
+    user.firstName ||
+    user.first_name ||
+    "";
+
+  const middleName =
+    student.middleName ||
+    student.middle_name ||
+    student.otherNames ||
+    user.middleName ||
+    user.middle_name ||
+    user.otherNames ||
+    "";
+
+  const lastName =
+    student.lastName ||
+    student.last_name ||
+    student.surname ||
+    user.lastName ||
+    user.last_name ||
+    user.surname ||
+    "";
+
+  const fullName =
+    student.fullName ||
+    student.full_name ||
+    student.name ||
+    user.fullName ||
+    user.full_name ||
+    user.name ||
+    [firstName, middleName, lastName]
+      .filter((part) => typeof part === "string" && part.trim())
+      .map((part) => part.trim())
+      .join(" ");
+
+  return {
+    student: {
+      _id: student._id,
+      studentId: student.studentId || "",
+      admissionNumber: student.admissionNumber || "",
+      firstName,
+      middleName,
+      lastName,
+      fullName,
+      name: fullName,
+    },
+    remark: savedRemark?.remark || "",
+    remarkId: savedRemark?._id || null,
+    updatedAt: savedRemark?.updatedAt || null,
+    submittedAt: savedRemark?.submittedAt || null,
+    attendanceOverride: normalizeAttendanceOverride(
+      savedRemark?.attendanceOverride
+    ),
+    onlineAttendance:
+      attendanceMap.get(studentKey) || emptyAttendance(),
+    results: resultsMap.get(studentKey) || [],
+  };
+});
+
 
     const isSubmitted =
       roster.length > 0 &&
