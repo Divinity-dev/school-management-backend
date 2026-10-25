@@ -1,21 +1,66 @@
+
 import Attendance from "../models/Attendance.js";
 import Student from "../models/Student.js";
 import SchoolClass from "../models/SchoolClass.js";
 import AcademicSession from "../models/AcademicSession.js";
 import AcademicTerm from "../models/AcademicTerm.js";
 
-// Check whether the current user can manage attendance for a class
+// Check whether a student occupies a purchased seat.
+const checkStudentPaidSeat = async (schoolId, studentId, subscription) => {
+  const rawLimit = subscription?.studentLimit;
+  const studentLimit = Number(rawLimit);
+
+  if (
+    rawLimit === undefined ||
+    rawLimit === null ||
+    !Number.isSafeInteger(studentLimit) ||
+    studentLimit < 0
+  ) {
+    return {
+      configured: false,
+      eligible: false,
+    };
+  }
+
+  // Do not use limit(0): MongoDB interprets it as no limit.
+  if (studentLimit === 0) {
+    return {
+      configured: true,
+      eligible: false,
+      studentLimit,
+    };
+  }
+
+  const eligibleStudents = await Student.find({
+    school: schoolId,
+    isActive: true,
+  })
+    .sort({ createdAt: 1, _id: 1 })
+    .limit(studentLimit)
+    .select("_id")
+    .lean();
+
+  const eligible = eligibleStudents.some(
+    (item) => item._id.toString() === studentId.toString()
+  );
+
+  return {
+    configured: true,
+    eligible,
+    studentLimit,
+  };
+};
+
+// Check whether the current user can manage attendance for a class.
 const canManageClassAttendance = (user, schoolClass) => {
   if (!user || !schoolClass) {
     return false;
   }
 
-  // Super admin can manage any school
   if (user.role === "superAdmin") {
     return true;
   }
 
-  // User must belong to the same school
   if (
     !user.school ||
     user.school.toString() !== schoolClass.school.toString()
@@ -23,12 +68,10 @@ const canManageClassAttendance = (user, schoolClass) => {
     return false;
   }
 
-  // School admin can manage attendance for their school
   if (user.role === "schoolAdmin") {
     return true;
   }
 
-  // Teacher can manage attendance for a class they are assigned to
   if (user.role === "teacher") {
     return (
       schoolClass.classTeacher &&
@@ -39,7 +82,7 @@ const canManageClassAttendance = (user, schoolClass) => {
   return false;
 };
 
-// Validate the academic session/term relationship
+// Validate the academic session/term relationship.
 const validateAcademicContext = async ({
   schoolId,
   academicSessionId,
@@ -82,7 +125,7 @@ const validateAcademicContext = async ({
   };
 };
 
-// Mark attendance
+// Mark attendance.
 export const markAttendance = async (req, res) => {
   try {
     const {
@@ -118,7 +161,14 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Find the class
+    const parsedDate = new Date(date);
+
+    if (Number.isNaN(parsedDate.getTime())) {
+      return res.status(400).json({
+        message: "Invalid attendance date",
+      });
+    }
+
     const schoolClass = await SchoolClass.findById(classId);
 
     if (!schoolClass) {
@@ -127,7 +177,6 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Prevent cross-school attendance
     if (
       req.user.role !== "superAdmin" &&
       (!req.user.school ||
@@ -139,14 +188,12 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Make sure the class belongs to the supplied school
     if (schoolClass.school.toString() !== school.toString()) {
       return res.status(400).json({
         message: "Class does not belong to the specified school",
       });
     }
 
-    // Check whether user can manage this class
     if (!canManageClassAttendance(req.user, schoolClass)) {
       return res.status(403).json({
         message:
@@ -154,7 +201,6 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Validate academic session and term
     const academicContext = await validateAcademicContext({
       schoolId: schoolClass.school,
       academicSessionId: academicSession,
@@ -167,7 +213,6 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Make sure class belongs to supplied academic session
     if (
       schoolClass.academicSession.toString() !==
       academicSession.toString()
@@ -177,7 +222,6 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Find student
     const existingStudent = await Student.findById(student);
 
     if (!existingStudent) {
@@ -186,7 +230,6 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Make sure student belongs to the same school
     if (
       existingStudent.school.toString() !==
       schoolClass.school.toString()
@@ -196,7 +239,6 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Make sure student belongs to the selected class
     if (
       existingStudent.schoolClass.toString() !==
       schoolClass._id.toString()
@@ -206,7 +248,6 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Make sure student's academic session matches the class
     if (
       existingStudent.academicSession.toString() !==
       schoolClass.academicSession.toString()
@@ -216,13 +257,49 @@ export const markAttendance = async (req, res) => {
       });
     }
 
-    // Check for existing attendance
+    if (!existingStudent.isActive) {
+      return res.status(400).json({
+        message: "Attendance cannot be marked for an inactive student",
+      });
+    }
+
+    // Check the student's purchased-seat eligibility.
+    const seatCheck = await checkStudentPaidSeat(
+      schoolClass.school,
+      existingStudent._id,
+      req.subscription
+    );
+
+    if (!seatCheck.configured) {
+      return res.status(403).json({
+        message:
+          "Unable to verify the school's purchased student seat allowance. Please check the active subscription.",
+        code: "STUDENT_SEAT_LIMIT_UNAVAILABLE",
+      });
+    }
+
+    if (!seatCheck.eligible) {
+      return res.status(403).json({
+        message:
+          "Attendance cannot be marked for this student because they are outside the school's purchased student seat allowance. Purchase additional seats or deactivate students who no longer require a seat.",
+        code: "STUDENT_SEAT_LIMIT_EXCEEDED",
+        studentLimit: seatCheck.studentLimit,
+      });
+    }
+
+    const startDate = new Date(
+      `${date}T00:00:00.000Z`
+    );
+    const endDate = new Date(
+      `${date}T23:59:59.999Z`
+    );
+
     const existingAttendance = await Attendance.findOne({
-      student,
+      student: existingStudent._id,
       term,
       date: {
-        $gte: new Date(`${date}T00:00:00.000Z`),
-        $lt: new Date(`${date}T23:59:59.999Z`),
+        $gte: startDate,
+        $lte: endDate,
       },
     });
 
@@ -237,8 +314,8 @@ export const markAttendance = async (req, res) => {
       academicSession,
       term,
       class: classId,
-      student,
-      date,
+      student: existingStudent._id,
+      date: parsedDate,
       status,
       remarks,
       markedBy: req.user._id,
@@ -251,21 +328,21 @@ export const markAttendance = async (req, res) => {
       .populate("term", "name")
       .populate("markedBy", "firstName lastName email role");
 
-    res.status(201).json({
+    return res.status(201).json({
       message: "Attendance marked successfully",
       attendance: populatedAttendance,
     });
   } catch (error) {
     console.error("Mark attendance error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error while marking attendance",
       error: error.message,
     });
   }
 };
 
-// Get attendance for a class on a specific date
+// Get attendance for a class on a specific date.
 export const getClassAttendance = async (req, res) => {
   try {
     const { classId, date, term } = req.query;
@@ -284,7 +361,6 @@ export const getClassAttendance = async (req, res) => {
       });
     }
 
-    // School isolation
     if (
       req.user.role !== "superAdmin" &&
       (!req.user.school ||
@@ -295,7 +371,6 @@ export const getClassAttendance = async (req, res) => {
       });
     }
 
-    // Teachers can only view attendance for their assigned class
     if (
       req.user.role === "teacher" &&
       (!schoolClass.classTeacher ||
@@ -306,14 +381,12 @@ export const getClassAttendance = async (req, res) => {
       });
     }
 
-    // Students and parents cannot access class-wide attendance
     if (!["superAdmin", "schoolAdmin", "teacher"].includes(req.user.role)) {
       return res.status(403).json({
         message: "You are not authorized to view class attendance",
       });
     }
 
-    // Validate academic term against the class session
     const academicContext = await validateAcademicContext({
       schoolId: schoolClass.school,
       academicSessionId: schoolClass.academicSession,
@@ -343,23 +416,23 @@ export const getClassAttendance = async (req, res) => {
       .populate("academicSession", "name")
       .populate("term", "name")
       .populate("markedBy", "firstName lastName email")
-      .sort({ "student.firstName": 1 });
+      .sort({ date: 1 });
 
-    res.status(200).json({
+    return res.status(200).json({
       count: attendance.length,
       attendance,
     });
   } catch (error) {
     console.error("Get class attendance error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error while fetching class attendance",
       error: error.message,
     });
   }
 };
 
-// Get attendance for a specific student
+// Get attendance for a specific student.
 export const getStudentAttendance = async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -373,7 +446,6 @@ export const getStudentAttendance = async (req, res) => {
       });
     }
 
-    // School isolation
     if (
       req.user.role !== "superAdmin" &&
       (!req.user.school ||
@@ -384,7 +456,6 @@ export const getStudentAttendance = async (req, res) => {
       });
     }
 
-    // Students can only view their own attendance
     if (
       req.user.role === "student" &&
       (!student.user ||
@@ -395,7 +466,6 @@ export const getStudentAttendance = async (req, res) => {
       });
     }
 
-    // Parents can only view their own child's attendance
     if (
       req.user.role === "parent" &&
       (!student.parent ||
@@ -406,7 +476,6 @@ export const getStudentAttendance = async (req, res) => {
       });
     }
 
-    // Teachers can only view students in their assigned class
     if (req.user.role === "teacher") {
       const schoolClass = await SchoolClass.findById(student.schoolClass);
 
@@ -450,21 +519,21 @@ export const getStudentAttendance = async (req, res) => {
       .populate("markedBy", "firstName lastName email")
       .sort({ date: -1 });
 
-    res.status(200).json({
+    return res.status(200).json({
       count: attendance.length,
       attendance,
     });
   } catch (error) {
     console.error("Get student attendance error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error while fetching student attendance",
       error: error.message,
     });
   }
 };
 
-// Update attendance
+// Update attendance.
 export const updateAttendance = async (req, res) => {
   try {
     const { attendanceId } = req.params;
@@ -486,7 +555,6 @@ export const updateAttendance = async (req, res) => {
       });
     }
 
-    // School isolation
     if (
       req.user.role !== "superAdmin" &&
       (!req.user.school ||
@@ -497,23 +565,45 @@ export const updateAttendance = async (req, res) => {
       });
     }
 
-    // Check class-level authorization
     if (!canManageClassAttendance(req.user, schoolClass)) {
       return res.status(403).json({
         message: "You are not authorized to update this attendance",
       });
     }
 
-    // Validate status
+    // Check the student's current purchased-seat eligibility.
+    const seatCheck = await checkStudentPaidSeat(
+      attendance.school,
+      attendance.student,
+      req.subscription
+    );
+
+    if (!seatCheck.configured) {
+      return res.status(403).json({
+        message:
+          "Unable to verify the school's purchased student seat allowance. Please check the active subscription.",
+        code: "STUDENT_SEAT_LIMIT_UNAVAILABLE",
+      });
+    }
+
+    if (!seatCheck.eligible) {
+      return res.status(403).json({
+        message:
+          "Attendance cannot be modified for this student because they are outside the school's purchased student seat allowance.",
+        code: "STUDENT_SEAT_LIMIT_EXCEEDED",
+        studentLimit: seatCheck.studentLimit,
+      });
+    }
+
     const allowedStatuses = ["present", "absent", "late", "excused"];
 
-    if (status && !allowedStatuses.includes(status)) {
+    if (status !== undefined && !allowedStatuses.includes(status)) {
       return res.status(400).json({
         message: "Invalid attendance status",
       });
     }
 
-    if (status) {
+    if (status !== undefined) {
       attendance.status = status;
     }
 
@@ -530,21 +620,21 @@ export const updateAttendance = async (req, res) => {
       .populate("term", "name")
       .populate("markedBy", "firstName lastName email role");
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Attendance updated successfully",
       attendance: updatedAttendance,
     });
   } catch (error) {
     console.error("Update attendance error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error while updating attendance",
       error: error.message,
     });
   }
 };
 
-// Get student attendance summary
+// Get student attendance summary.
 export const getStudentAttendanceSummary = async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -564,7 +654,6 @@ export const getStudentAttendanceSummary = async (req, res) => {
       });
     }
 
-    // School isolation
     if (
       req.user.role !== "superAdmin" &&
       (!req.user.school ||
@@ -575,7 +664,6 @@ export const getStudentAttendanceSummary = async (req, res) => {
       });
     }
 
-    // Parents can only view their own child's attendance
     if (
       req.user.role === "parent" &&
       (!student.parent ||
@@ -586,7 +674,6 @@ export const getStudentAttendanceSummary = async (req, res) => {
       });
     }
 
-    // Students can only view their own attendance
     if (
       req.user.role === "student" &&
       (!student.user ||
@@ -597,7 +684,6 @@ export const getStudentAttendanceSummary = async (req, res) => {
       });
     }
 
-    // Teachers can view students in their assigned class
     if (req.user.role === "teacher") {
       const schoolClass = await SchoolClass.findById(student.schoolClass);
 
@@ -612,7 +698,6 @@ export const getStudentAttendanceSummary = async (req, res) => {
       }
     }
 
-    // Validate academic term against the student's academic session
     const academicContext = await validateAcademicContext({
       schoolId: student.school,
       academicSessionId: student.academicSession,
@@ -653,7 +738,7 @@ export const getStudentAttendanceSummary = async (req, res) => {
           )
         : 0;
 
-    res.status(200).json({
+    return res.status(200).json({
       student: {
         id: student._id,
         studentId: student.studentId,
@@ -666,13 +751,13 @@ export const getStudentAttendanceSummary = async (req, res) => {
   } catch (error) {
     console.error("Get student attendance summary error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error while fetching attendance summary",
     });
   }
 };
 
-// Get class attendance summary
+// Get class attendance summary.
 export const getClassAttendanceSummary = async (req, res) => {
   try {
     const { classId, term } = req.query;
@@ -691,7 +776,6 @@ export const getClassAttendanceSummary = async (req, res) => {
       });
     }
 
-    // School isolation
     if (
       req.user.role !== "superAdmin" &&
       (!req.user.school ||
@@ -702,8 +786,6 @@ export const getClassAttendanceSummary = async (req, res) => {
       });
     }
 
-    // Only school admins, super admins and the class teacher
-    // can view the complete class summary.
     if (req.user.role === "teacher") {
       const isClassTeacher =
         schoolClass.classTeacher?.toString() === req.user._id.toString();
@@ -722,7 +804,6 @@ export const getClassAttendanceSummary = async (req, res) => {
       });
     }
 
-    // Validate academic term against the class session
     const academicContext = await validateAcademicContext({
       schoolId: schoolClass.school,
       academicSessionId: schoolClass.academicSession,
@@ -788,7 +869,7 @@ export const getClassAttendanceSummary = async (req, res) => {
       };
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       class: {
         id: schoolClass._id,
         name: schoolClass.name,
@@ -802,13 +883,13 @@ export const getClassAttendanceSummary = async (req, res) => {
   } catch (error) {
     console.error("Get class attendance summary error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error while fetching class attendance summary",
     });
   }
 };
 
-// Get current student's attendance
+// Get current student's attendance.
 export const getMyAttendance = async (req, res) => {
   try {
     if (req.user.role !== "student") {
@@ -874,7 +955,7 @@ export const getMyAttendance = async (req, res) => {
   }
 };
 
-// Get current student's attendance summary
+// Get current student's attendance summary.
 export const getMyAttendanceSummary = async (req, res) => {
   try {
     if (req.user.role !== "student") {
@@ -935,7 +1016,6 @@ export const getMyAttendanceSummary = async (req, res) => {
       (record) => record.status === "excused"
     ).length;
 
-    // Late counts as attendance.
     const attended = present + late;
 
     const percentage =
@@ -949,7 +1029,6 @@ export const getMyAttendanceSummary = async (req, res) => {
         middleName: student.middleName,
         lastName: student.lastName,
       },
-
       summary: {
         total,
         present,
@@ -968,6 +1047,3 @@ export const getMyAttendanceSummary = async (req, res) => {
     });
   }
 };
-
-
-

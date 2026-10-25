@@ -26,94 +26,102 @@ import {
   updateSchoolDaysOpened,
 } from "../controllers/reportCardController.js";
 
-import {
-  protect,
-  authorize,
-} from "../middleware/authMiddleware.js";
-
-import {
-  requireActiveSubscription,
-} from "../middleware/subscriptionMiddleware.js";
+import { protect, authorize } from "../middleware/authMiddleware.js";
+import { requireActiveSubscription } from "../middleware/subscriptionMiddleware.js";
+import { requireStudentSeatForResult } from "../middleware/resultSeatMiddleware.js";
 
 const router = express.Router();
 
-// Create result
+// Create a result
 router.post(
   "/",
   protect,
+  authorize("teacher", "schoolAdmin", "superAdmin"),
   requireActiveSubscription,
+  requireStudentSeatForResult,
   createResult
 );
 
 // Read-only routes
 router.get("/my-results", protect, getMyResults);
 
-router.get("/admin-results", protect, getAdminResults);
+router.get(
+  "/admin-results",
+  protect,
+  authorize("schoolAdmin", "superAdmin"),
+  getAdminResults
+);
 
 router.get(
   "/admin-class-matrix",
   protect,
+  authorize("schoolAdmin", "superAdmin"),
   getAdminClassResultsMatrix
 );
 
 router.get(
   "/analytics/class-averages",
   protect,
+  authorize("schoolAdmin", "superAdmin"),
   getClassAverages
 );
 
 router.get(
   "/analytics/class-rankings",
   protect,
+  authorize("schoolAdmin", "superAdmin"),
   getClassRanking
 );
 
 router.get(
   "/student-report",
   protect,
+  authorize("schoolAdmin", "superAdmin", "teacher"),
   getStudentReport
 );
 
 router.get(
   "/teacher-results",
   protect,
+  authorize("teacher"),
   getTeacherResults
 );
 
 router.get(
   "/teacher-roster",
   protect,
+  authorize("teacher"),
   getTeacherRoster
 );
 
-// Student report card for one academic session and term
 router.get(
   "/report-card",
   protect,
   getMyReportCard
 );
 
-// School-wide school days opened
+// School days opened settings
 router.get(
   "/school-days-opened",
   protect,
-  authorize("schoolAdmin"),
+  authorize("schoolAdmin", "superAdmin"),
   getSchoolDaysOpened
 );
 
 router.put(
   "/school-days-opened",
   protect,
-  authorize("schoolAdmin"),
-  requireActiveSubscription,
+  authorize("schoolAdmin", "superAdmin"),
   updateSchoolDaysOpened
 );
 
-// Submit teacher results
+// Submit teacher results in bulk
 router.post(
   "/teacher-results/submit",
   protect,
+  authorize("teacher"),
   requireActiveSubscription,
+  requireStudentSeatForResult,
   submitTeacherResults
 );
 
@@ -121,14 +129,17 @@ router.post(
 router.get(
   "/admin-review/:id",
   protect,
+  authorize("schoolAdmin", "superAdmin"),
   getResultForAdminReview
 );
 
-// Update result
+// Update a result
 router.put(
   "/:id",
   protect,
+  authorize("teacher", "schoolAdmin", "superAdmin"),
   requireActiveSubscription,
+  requireStudentSeatForResult,
   updateResult
 );
 
@@ -136,7 +147,9 @@ router.put(
 router.post(
   "/:id/submit",
   protect,
+  authorize("teacher"),
   requireActiveSubscription,
+  requireStudentSeatForResult,
   submitResultForReview
 );
 
@@ -144,7 +157,9 @@ router.post(
 router.post(
   "/:id/publish",
   protect,
+  authorize("schoolAdmin", "superAdmin"),
   requireActiveSubscription,
+  requireStudentSeatForResult,
   publishResult
 );
 
@@ -152,7 +167,9 @@ router.post(
 router.post(
   "/:id/reject",
   protect,
+  authorize("schoolAdmin", "superAdmin"),
   requireActiveSubscription,
+  requireStudentSeatForResult,
   rejectResult
 );
 
@@ -160,7 +177,9 @@ router.post(
 router.post(
   "/:id/lock",
   protect,
+  authorize("schoolAdmin", "superAdmin"),
   requireActiveSubscription,
+  requireStudentSeatForResult,
   lockResult
 );
 

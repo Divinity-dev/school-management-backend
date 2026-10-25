@@ -470,6 +470,29 @@ const schoolSchema = new mongoose.Schema(
       }),
     },
 
+    // Paystack routing for school-fee payments only.
+    paystackSubaccountCode: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    paystackSubaccountStatus: {
+      type: String,
+      enum: [
+        "not_configured",
+        "pending",
+        "active",
+        "failed",
+      ],
+      default: "not_configured",
+    },
+
+    paystackSubaccountUpdatedAt: {
+      type: Date,
+      default: null,
+    },
+
     /*
     |--------------------------------------------------------------------------
     | Grading System
