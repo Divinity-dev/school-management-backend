@@ -33,25 +33,32 @@ import classTeacherRemarkRoutes from "./routes/classTeacherRemarkRoutes.js";
 
 const app = express();
 
-// CORS
+ // CORS
 const allowedOrigins = [
-  process.env.FRONTEND_URL,
+  "https://www.school-pilot.app",
+  "https://school-pilot.app",
   "http://localhost:3000",
-];
+  process.env.FRONTEND_URL,
+].filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests without an Origin header (e.g. server-to-server)
+      // Allow requests without an Origin header, such as server-to-server calls.
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
 
+      console.error(`CORS blocked origin: ${origin}`);
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    optionsSuccessStatus: 204,
   })
 );
+
 
 // Paystack webhook must receive the raw body for signature verification.
 // Keep this before express.json().
