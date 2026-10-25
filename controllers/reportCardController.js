@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 import School from "../models/School.js";
@@ -199,10 +200,7 @@ export const getSchoolDaysOpened = async (req, res) => {
       });
     }
 
-    if (
-      !isValidId(academicSession) ||
-      !isValidId(academicTerm)
-    ) {
+    if (!isValidId(academicSession) || !isValidId(academicTerm)) {
       return res.status(400).json({
         success: false,
         message: "A valid academic session and term are required.",
@@ -272,10 +270,7 @@ export const updateSchoolDaysOpened = async (req, res) => {
       });
     }
 
-    if (
-      !isValidId(academicSession) ||
-      !isValidId(academicTerm)
-    ) {
+    if (!isValidId(academicSession) || !isValidId(academicTerm)) {
       return res.status(400).json({
         success: false,
         message: "A valid academic session and term are required.",
@@ -284,11 +279,9 @@ export const updateSchoolDaysOpened = async (req, res) => {
 
     if (
       schoolDaysOpened !== null &&
-      (
-        typeof schoolDaysOpened !== "number" ||
+      (typeof schoolDaysOpened !== "number" ||
         !Number.isInteger(schoolDaysOpened) ||
-        schoolDaysOpened < 0
-      )
+        schoolDaysOpened < 0)
     ) {
       return res.status(400).json({
         success: false,
@@ -373,7 +366,8 @@ export const updateSchoolDaysOpened = async (req, res) => {
 | Parent, teacher, schoolAdmin:
 |   ?academicSession=SESSION_ID&academicTerm=TERM_ID&studentId=STUDENT_ID
 |
-| Only published and locked results are included.
+| Teachers may preview all result statuses for authorized classes.
+| Students and parents can only access published or locked results.
 |--------------------------------------------------------------------------
 */
 
@@ -408,10 +402,7 @@ export const getMyReportCard = async (req, res) => {
       });
     }
 
-    if (
-      !isValidId(academicSession) ||
-      !isValidId(academicTerm)
-    ) {
+    if (!isValidId(academicSession) || !isValidId(academicTerm)) {
       return res.status(400).json({
         success: false,
         message: "Select a valid academic session and term.",
@@ -488,15 +479,26 @@ export const getMyReportCard = async (req, res) => {
     }
 
     /*
-     * Only published or locked results are available for printing.
+     * Teachers and school administrators can preview all statuses.
+     * Students and parents are restricted to published/locked results.
      */
-    const results = await Result.find({
+    const resultFilter = {
       school: schoolId,
       student: student._id,
       academicSession,
       academicTerm,
-      status: { $in: ["published", "locked"] },
-    })
+    };
+
+    if (
+      req.user.role === "student" ||
+      req.user.role === "parent"
+    ) {
+      resultFilter.status = {
+        $in: ["published", "locked"],
+      };
+    }
+
+    const results = await Result.find(resultFilter)
       .populate("subject", "name code")
       .populate("schoolClass", "name arm section")
       .lean();
@@ -505,7 +507,9 @@ export const getMyReportCard = async (req, res) => {
       return res.status(404).json({
         success: false,
         message:
-          "No published results are available for the selected term yet.",
+          req.user.role === "teacher"
+            ? "No results are available for this student in the selected term yet."
+            : "No published results are available for the selected term yet.",
       });
     }
 
@@ -534,7 +538,6 @@ export const getMyReportCard = async (req, res) => {
 
     /*
      * Confirm that the class belongs to this school and session.
-     * The class teacher field is used to authorize teacher access.
      */
     const resultClass = await SchoolClass.findOne({
       _id: classId,
@@ -552,12 +555,26 @@ export const getMyReportCard = async (req, res) => {
       });
     }
 
+    /*
+     * A teacher may preview a report card only if they are the
+     * class teacher or entered at least one result for this student
+     * in the selected class, session, and term.
+     */
     if (req.user.role === "teacher") {
       const isClassTeacher =
         String(resultClass.classTeacher || "") ===
         String(req.user._id);
 
-      if (!isClassTeacher) {
+      const hasEnteredResult = await Result.exists({
+        school: schoolId,
+        student: student._id,
+        schoolClass: classId,
+        academicSession,
+        academicTerm,
+        enteredBy: req.user._id,
+      });
+
+      if (!isClassTeacher && !hasEnteredResult) {
         return res.status(403).json({
           success: false,
           message:
@@ -712,7 +729,7 @@ export const getMyReportCard = async (req, res) => {
         : 0;
 
     /*
-     * Calculate the average percentage per subject so differing
+     * Calculate average percentage per subject so differing
      * maximum scores do not distort the overall grade.
      */
     const averagePercentage =
@@ -842,4 +859,3 @@ export const getMyReportCard = async (req, res) => {
     });
   }
 };
-
