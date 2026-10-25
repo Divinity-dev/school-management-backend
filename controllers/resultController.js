@@ -1201,8 +1201,8 @@ export const getTeacherRoster = async (req, res) => {
     })
       .populate("user", "firstName lastName email")
       .sort({
-        "user.firstName": 1,
-        "user.lastName": 1,
+        firstName: 1,
+        lastName: 1,
       });
 
     const studentIds = students.map((student) => student._id);
@@ -1233,9 +1233,12 @@ export const getTeacherRoster = async (req, res) => {
           _id: student._id,
           studentId: student.studentId,
           admissionNumber: student.admissionNumber,
-          firstName: student.user?.firstName || "",
-          lastName: student.user?.lastName || "",
-          email: student.user?.email || "",
+          firstName:
+            student.firstName || student.user?.firstName || "",
+          middleName: student.middleName || "",
+          lastName:
+            student.lastName || student.user?.lastName || "",
+          email: student.user?.email || student.email || "",
         },
         result: result
           ? {
@@ -1299,7 +1302,7 @@ export const submitTeacherResults = async (req, res) => {
 
     if (!Array.isArray(results) || results.length === 0) {
       return res.status(400).json({
-        message: "Results must be a non-empty array.",
+        message: "Provide at least one student result.",
       });
     }
 
@@ -1399,36 +1402,196 @@ export const submitTeacherResults = async (req, res) => {
       ])
     );
 
+    const configuredComponents = gradingSystem.caComponents;
+    const configuredComponentMap = new Map(
+      configuredComponents.map((component) => [
+        component.name.toLowerCase(),
+        component,
+      ])
+    );
+
     const preparedResults = [];
 
     for (const item of results) {
-      const existingResult = existingResultMap.get(
-        String(item.student)
-      );
+      const studentId = String(item.student);
+      const existingResult = existingResultMap.get(studentId);
 
       if (existingResult && existingResult.status !== "draft") {
         return res.status(400).json({
           message:
-            "Only draft results can be edited. A result may already have been submitted for review, published, or locked.",
+            "Only draft results can be edited. One or more results have already been submitted for review, published, or locked.",
         });
       }
 
-      const calculated = calculateResultScores({
-        assessmentScores: item.assessmentScores,
-        examScore: item.examScore,
-        gradingSystem,
-      });
-
-      if (calculated.error) {
+      if (
+        !Array.isArray(item.assessmentScores) ||
+        item.assessmentScores.length > configuredComponents.length
+      ) {
         return res.status(400).json({
-          message: `Student ${item.student}: ${calculated.error}`,
+          message: `Invalid CA assessment scores for student ${studentId}.`,
         });
+      }
+
+      const submittedComponents = new Map();
+
+      for (const assessment of item.assessmentScores) {
+        if (!assessment?.name) {
+          return res.status(400).json({
+            message:
+              `Every CA score must have a component name for student ${studentId}.`,
+          });
+        }
+
+        const normalizedName = String(assessment.name)
+          .trim()
+          .toLowerCase();
+
+        const component = configuredComponentMap.get(normalizedName);
+
+        if (!component) {
+          return res.status(400).json({
+            message:
+              `Unknown CA component "${assessment.name}" for student ${studentId}.`,
+          });
+        }
+
+        if (submittedComponents.has(normalizedName)) {
+          return res.status(400).json({
+            message:
+              `Duplicate CA component "${assessment.name}" for student ${studentId}.`,
+          });
+        }
+
+        submittedComponents.set(normalizedName, {
+          component,
+          rawScore: assessment.score,
+        });
+      }
+
+      const assessmentScores = [];
+      let caScore = 0;
+
+      for (const [normalizedName, entry] of submittedComponents) {
+        const { component, rawScore } = entry;
+
+        // Empty inputs are omitted rather than converted to zero.
+        if (
+          rawScore === "" ||
+          rawScore === null ||
+          rawScore === undefined
+        ) {
+          continue;
+        }
+
+        const score = Number(rawScore);
+
+        if (!Number.isFinite(score)) {
+          return res.status(400).json({
+            message:
+              `${component.name} must be a valid number for student ${studentId}.`,
+          });
+        }
+
+        if (score < 0 || score > component.maximum) {
+          return res.status(400).json({
+            message:
+              `${component.name} must be between 0 and ${component.maximum} for student ${studentId}.`,
+          });
+        }
+
+        assessmentScores.push({
+          name: component.name,
+          score,
+          maximum: component.maximum,
+        });
+
+        caScore += score;
+      }
+
+      let numericExamScore = null;
+
+      if (
+        item.examScore !== "" &&
+        item.examScore !== null &&
+        item.examScore !== undefined
+      ) {
+        numericExamScore = Number(item.examScore);
+
+        if (!Number.isFinite(numericExamScore)) {
+          return res.status(400).json({
+            message:
+              `Exam score must be a valid number for student ${studentId}.`,
+          });
+        }
+
+        if (
+          numericExamScore < 0 ||
+          numericExamScore > gradingSystem.examMaximum
+        ) {
+          return res.status(400).json({
+            message:
+              `Exam score must be between 0 and ${gradingSystem.examMaximum} for student ${studentId}.`,
+          });
+        }
+      }
+
+      const hasAnyScore =
+        assessmentScores.length > 0 || numericExamScore !== null;
+
+      // Do not create or modify a result when this student has
+      // no entered scores.
+      if (!hasAnyScore) {
+        continue;
+      }
+
+      const hasAllCaScores =
+        assessmentScores.length === configuredComponents.length;
+
+      const isComplete =
+        hasAllCaScores && numericExamScore !== null;
+
+      let total = null;
+      let grade = "";
+      let remark = "";
+
+      if (isComplete) {
+        const calculated = calculateResultScores({
+          assessmentScores,
+          examScore: numericExamScore,
+          gradingSystem,
+        });
+
+        if (calculated.error) {
+          return res.status(400).json({
+            message: `Student ${studentId}: ${calculated.error}`,
+          });
+        }
+
+        caScore = calculated.caScore;
+        total = calculated.total;
+        grade = calculated.grade;
+        remark = calculated.remark;
       }
 
       preparedResults.push({
-        studentId: String(item.student),
+        studentId,
         existingResult,
-        calculated,
+        resultData: {
+          assessmentScores,
+          caScore,
+          examScore: numericExamScore,
+          total,
+          grade,
+          remark,
+          gradingSystem: buildGradingSystemSnapshot(gradingSystem),
+        },
+      });
+    }
+
+    if (preparedResults.length === 0) {
+      return res.status(400).json({
+        message:
+          "No scores have been entered. Enter at least one score before saving a draft.",
       });
     }
 
@@ -1436,21 +1599,7 @@ export const submitTeacherResults = async (req, res) => {
     const updatedResults = [];
 
     for (const item of preparedResults) {
-      const {
-        studentId,
-        existingResult,
-        calculated,
-      } = item;
-
-      const resultData = {
-        assessmentScores: calculated.assessmentScores,
-        caScore: calculated.caScore,
-        examScore: calculated.examScore,
-        total: calculated.total,
-        grade: calculated.grade,
-        remark: calculated.remark,
-        gradingSystem: buildGradingSystemSnapshot(gradingSystem),
-      };
+      const { studentId, existingResult, resultData } = item;
 
       if (existingResult) {
         Object.assign(existingResult, resultData);
@@ -1474,9 +1623,11 @@ export const submitTeacherResults = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: "Results saved as drafts successfully.",
-      created: createdResults,
-      updated: updatedResults,
+      message: "Draft results saved successfully.",
+      created: createdResults.length,
+      updated: updatedResults.length,
+      saved: preparedResults.length,
+      skipped: results.length - preparedResults.length,
     });
   } catch (error) {
     console.error("Save teacher results error:", error);

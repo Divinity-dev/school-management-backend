@@ -34,10 +34,21 @@ import classTeacherRemarkRoutes from "./routes/classTeacherRemarkRoutes.js";
 const app = express();
 
 // CORS
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  "http://localhost:3000",
+];
+
 app.use(
   cors({
-    origin:
-      process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: (origin, callback) => {
+      // Allow requests without an Origin header (e.g. server-to-server)
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );

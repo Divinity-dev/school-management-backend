@@ -1,4 +1,17 @@
+
 import School from "../models/School.js";
+import {
+  createSubaccount,
+  updateSubaccount,
+} from "../utils/paystack.js";
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+// Supports both a raw school ID and a populated school object.
+const getSchoolId = (req) =>
+  req.user?.school?._id || req.user?.school || null;
 
 /* =========================================================
    CREATE SCHOOL
@@ -16,12 +29,13 @@ export const createSchool = async (req, res) => {
       country,
     } = req.body;
 
-    if (!name || !email) {
+    if (!name?.trim() || !email?.trim()) {
       return res.status(400).json({
         message: "School name and email are required",
       });
     }
 
+    const normalizedName = name.trim();
     const normalizedEmail = email.toLowerCase().trim();
 
     const existingSchool = await School.findOne({
@@ -34,13 +48,9 @@ export const createSchool = async (req, res) => {
       });
     }
 
-    /* -------------------------------------------------------
-       GENERATE PUBLIC WEBSITE SLUG
-    ------------------------------------------------------- */
-
-    const baseSlug = name
+    // Generate the public website slug.
+    const baseSlug = normalizedName
       .toLowerCase()
-      .trim()
       .replace(/[^a-z0-9\s-]/g, "")
       .replace(/\s+/g, "-")
       .replace(/-+/g, "-")
@@ -61,12 +71,8 @@ export const createSchool = async (req, res) => {
       slug = `${baseSlug}-${counter}`;
     }
 
-    /* -------------------------------------------------------
-       CREATE SCHOOL
-    ------------------------------------------------------- */
-
     const school = await School.create({
-      name: name.trim(),
+      name: normalizedName,
       slug,
       email: normalizedEmail,
       phone,
@@ -83,6 +89,14 @@ export const createSchool = async (req, res) => {
   } catch (error) {
     console.error("Create school error:", error);
 
+    // A unique index, if configured, may catch concurrent duplicates.
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message:
+          "A school with this email or website address already exists",
+      });
+    }
+
     return res.status(500).json({
       message: "Server error while creating school",
     });
@@ -95,13 +109,15 @@ export const createSchool = async (req, res) => {
 
 export const getSchoolGradingSystem = async (req, res) => {
   try {
-    if (!req.user.school) {
+    const schoolId = getSchoolId(req);
+
+    if (!schoolId) {
       return res.status(400).json({
         message: "No school is associated with this account",
       });
     }
 
-    const school = await School.findById(req.user.school).select(
+    const school = await School.findById(schoolId).select(
       "gradingSystem"
     );
 
@@ -127,43 +143,11 @@ export const getSchoolGradingSystem = async (req, res) => {
    UPDATE SCHOOL GRADING SYSTEM
 ========================================================= */
 
-/**
- * Supports:
- *
- * {
- *   caMaximum: 40,
- *   examMaximum: 60,
- *   totalMaximum: 100,
- *
- *   caComponents: [
- *     {
- *       name: "1st Test",
- *       maximum: 15
- *     },
- *     {
- *       name: "2nd Test",
- *       maximum: 15
- *     },
- *     {
- *       name: "Other",
- *       maximum: 10
- *     }
- *   ],
- *
- *   gradingScale: [
- *     {
- *       min: 70,
- *       max: 100,
- *       grade: "A",
- *       remark: "Excellent"
- *     }
- *   ]
- * }
- */
-
 export const updateSchoolGradingSystem = async (req, res) => {
   try {
-    if (!req.user.school) {
+    const schoolId = getSchoolId(req);
+
+    if (!schoolId) {
       return res.status(400).json({
         message: "No school is associated with this account",
       });
@@ -177,22 +161,11 @@ export const updateSchoolGradingSystem = async (req, res) => {
       gradingScale,
     } = req.body;
 
-    /* -------------------------------------------------------
-       BASIC NUMBER VALIDATION
-    ------------------------------------------------------- */
-
+    // Number validation.
     if (
       typeof caMaximum !== "number" ||
       typeof examMaximum !== "number" ||
-      typeof totalMaximum !== "number"
-    ) {
-      return res.status(400).json({
-        message:
-          "CA maximum, exam maximum and total maximum must be numbers",
-      });
-    }
-
-    if (
+      typeof totalMaximum !== "number" ||
       !Number.isFinite(caMaximum) ||
       !Number.isFinite(examMaximum) ||
       !Number.isFinite(totalMaximum)
@@ -216,10 +189,6 @@ export const updateSchoolGradingSystem = async (req, res) => {
       });
     }
 
-    /* -------------------------------------------------------
-       TOTAL VALIDATION
-    ------------------------------------------------------- */
-
     if (caMaximum + examMaximum !== totalMaximum) {
       return res.status(400).json({
         message:
@@ -227,10 +196,7 @@ export const updateSchoolGradingSystem = async (req, res) => {
       });
     }
 
-    /* -------------------------------------------------------
-       CA COMPONENT VALIDATION
-    ------------------------------------------------------- */
-
+    // Validate CA components.
     if (!Array.isArray(caComponents)) {
       return res.status(400).json({
         message: "CA components must be an array",
@@ -263,17 +229,20 @@ export const updateSchoolGradingSystem = async (req, res) => {
         });
       }
 
-      if (!Number.isFinite(maximum)) {
+      if (
+        component.maximum === "" ||
+        component.maximum === null ||
+        component.maximum === undefined ||
+        !Number.isFinite(maximum)
+      ) {
         return res.status(400).json({
-          message:
-            `Maximum score for "${name}" must be a valid number`,
+          message: `Maximum score for "${name}" must be a valid number`,
         });
       }
 
       if (maximum < 0) {
         return res.status(400).json({
-          message:
-            `Maximum score for "${name}" cannot be negative`,
+          message: `Maximum score for "${name}" cannot be negative`,
         });
       }
 
@@ -281,8 +250,7 @@ export const updateSchoolGradingSystem = async (req, res) => {
 
       if (componentNames.has(normalizedName)) {
         return res.status(400).json({
-          message:
-            `Duplicate CA component "${name}"`,
+          message: `Duplicate CA component "${name}"`,
         });
       }
 
@@ -306,10 +274,7 @@ export const updateSchoolGradingSystem = async (req, res) => {
       });
     }
 
-    /* -------------------------------------------------------
-       GRADING SCALE VALIDATION
-    ------------------------------------------------------- */
-
+    // Validate grading scale.
     if (!Array.isArray(gradingScale)) {
       return res.status(400).json({
         message: "Grading scale must be an array",
@@ -327,7 +292,8 @@ export const updateSchoolGradingSystem = async (req, res) => {
     for (const rule of gradingScale) {
       if (!rule || typeof rule !== "object") {
         return res.status(400).json({
-          message: "Every grading scale rule must be a valid object",
+          message:
+            "Every grading scale rule must be a valid object",
         });
       }
 
@@ -336,7 +302,16 @@ export const updateSchoolGradingSystem = async (req, res) => {
       const grade = String(rule.grade || "").trim();
       const remark = String(rule.remark || "").trim();
 
-      if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      if (
+        rule.min === "" ||
+        rule.min === null ||
+        rule.min === undefined ||
+        rule.max === "" ||
+        rule.max === null ||
+        rule.max === undefined ||
+        !Number.isFinite(min) ||
+        !Number.isFinite(max)
+      ) {
         return res.status(400).json({
           message:
             "Grading scale minimum and maximum must be valid numbers",
@@ -385,10 +360,7 @@ export const updateSchoolGradingSystem = async (req, res) => {
       });
     }
 
-    /* -------------------------------------------------------
-       CHECK FOR OVERLAPPING GRADING RANGES
-    ------------------------------------------------------- */
-
+    // Sort a copy for overlap and coverage validation.
     const sortedScale = [...normalizedGradingScale].sort(
       (a, b) => a.min - b.min
     );
@@ -397,6 +369,7 @@ export const updateSchoolGradingSystem = async (req, res) => {
       const current = sortedScale[i];
       const next = sortedScale[i + 1];
 
+      // The existing grading rules use inclusive boundaries.
       if (current.max >= next.min) {
         return res.status(400).json({
           message:
@@ -404,10 +377,6 @@ export const updateSchoolGradingSystem = async (req, res) => {
         });
       }
     }
-
-    /* -------------------------------------------------------
-       CHECK THAT THE SCALE COVERS THE TOTAL RANGE
-    ------------------------------------------------------- */
 
     const coversZero = sortedScale.some(
       (rule) => rule.min === 0
@@ -424,21 +393,13 @@ export const updateSchoolGradingSystem = async (req, res) => {
       });
     }
 
-    /* -------------------------------------------------------
-       FIND SCHOOL
-    ------------------------------------------------------- */
-
-    const school = await School.findById(req.user.school);
+    const school = await School.findById(schoolId);
 
     if (!school) {
       return res.status(404).json({
         message: "School not found",
       });
     }
-
-    /* -------------------------------------------------------
-       UPDATE GRADING SYSTEM
-    ------------------------------------------------------- */
 
     school.gradingSystem = {
       caMaximum,
@@ -457,12 +418,6 @@ export const updateSchoolGradingSystem = async (req, res) => {
   } catch (error) {
     console.error("Update grading system error:", error);
 
-    /*
-     * Mongoose validation errors from School.js
-     * are returned to the client as 400 rather than
-     * being treated as a generic server error.
-     */
-
     if (error.name === "ValidationError") {
       return res.status(400).json({
         message: error.message,
@@ -475,20 +430,22 @@ export const updateSchoolGradingSystem = async (req, res) => {
   }
 };
 
-// =========================================================
-// GET SCHOOL BANK DETAILS
-// =========================================================
+/* =========================================================
+   GET SCHOOL BANK DETAILS
+========================================================= */
 
 export const getSchoolBankDetails = async (req, res) => {
   try {
-    if (!req.user.school) {
+    const schoolId = getSchoolId(req);
+
+    if (!schoolId) {
       return res.status(400).json({
         message: "No school is associated with this account",
       });
     }
 
-    const school = await School.findById(req.user.school).select(
-      "bankDetails"
+    const school = await School.findById(schoolId).select(
+      "bankDetails paystackSubaccountStatus"
     );
 
     if (!school) {
@@ -497,8 +454,13 @@ export const getSchoolBankDetails = async (req, res) => {
       });
     }
 
+    const paymentSetupStatus =
+      school.paystackSubaccountStatus || "not_configured";
+
     return res.status(200).json({
       bankDetails: school.bankDetails,
+      onlinePaymentsEnabled: paymentSetupStatus === "active",
+      paymentSetupStatus,
     });
   } catch (error) {
     console.error("Get school bank details error:", error);
@@ -509,15 +471,17 @@ export const getSchoolBankDetails = async (req, res) => {
   }
 };
 
-// =========================================================
-// UPDATE SCHOOL BANK DETAILS
-// =========================================================
+/* =========================================================
+   UPDATE SCHOOL BANK DETAILS
+========================================================= */
 
 export const updateSchoolBankDetails = async (req, res) => {
   try {
-    if (!req.user.school) {
+    const schoolId = getSchoolId(req);
+
+    if (!schoolId) {
       return res.status(400).json({
-        message: "No school is associated with this account",
+        message: "No school is associated with this account.",
       });
     }
 
@@ -528,10 +492,6 @@ export const updateSchoolBankDetails = async (req, res) => {
       bankCode,
       paymentInstructions,
     } = req.body;
-
-    /* -------------------------------------------------------
-       BASIC VALIDATION
-    ------------------------------------------------------- */
 
     const normalizedAccountName = String(
       accountName || ""
@@ -555,50 +515,104 @@ export const updateSchoolBankDetails = async (req, res) => {
 
     if (!normalizedAccountName) {
       return res.status(400).json({
-        message: "Account name is required",
-      });
-    }
-
-    if (!normalizedAccountNumber) {
-      return res.status(400).json({
-        message: "Account number is required",
+        message: "Account name is required.",
       });
     }
 
     if (!/^\d{10}$/.test(normalizedAccountNumber)) {
       return res.status(400).json({
-        message: "Account number must be exactly 10 digits",
+        message: "Account number must be exactly 10 digits.",
       });
     }
 
-    if (!normalizedBankName) {
+    if (!normalizedBankName || !normalizedBankCode) {
       return res.status(400).json({
-        message: "Bank name is required",
+        message: "Bank name and bank code are required.",
       });
     }
 
-    if (!normalizedBankCode) {
-      return res.status(400).json({
-        message: "Bank code is required",
-      });
-    }
-
-    /* -------------------------------------------------------
-       FIND SCHOOL
-    ------------------------------------------------------- */
-
-    const school = await School.findById(req.user.school);
+    const school = await School.findById(schoolId);
 
     if (!school) {
       return res.status(404).json({
-        message: "School not found",
+        message: "School not found.",
       });
     }
 
-    /* -------------------------------------------------------
-       UPDATE BANK DETAILS
-    ------------------------------------------------------- */
+    const existingBankDetails = school.bankDetails || {};
 
+    const bankAccountChanged =
+      String(existingBankDetails.accountNumber || "").trim() !==
+        normalizedAccountNumber ||
+      String(existingBankDetails.bankCode || "").trim() !==
+        normalizedBankCode;
+
+    const needsSubaccountSetup =
+      !school.paystackSubaccountCode ||
+      school.paystackSubaccountStatus !== "active" ||
+      bankAccountChanged;
+
+    let subaccountCode = school.paystackSubaccountCode || "";
+
+    if (needsSubaccountSetup) {
+      // Persist a fail-closed status before making the external request.
+      // School-fee initialization must reject schools that are not active.
+      school.paystackSubaccountStatus = "pending";
+      await school.save();
+
+      try {
+        if (subaccountCode) {
+          const updatedSubaccount = await updateSubaccount({
+            subaccountCode,
+            businessName: school.name,
+            bankCode: normalizedBankCode,
+            accountNumber: normalizedAccountNumber,
+          });
+
+          subaccountCode = updatedSubaccount.subaccount_code;
+        } else {
+          const newSubaccount = await createSubaccount({
+            businessName: school.name,
+            bankCode: normalizedBankCode,
+            accountNumber: normalizedAccountNumber,
+            contactName: normalizedAccountName,
+            contactEmail: school.email,
+            contactPhone: school.phone,
+          });
+
+          subaccountCode = newSubaccount.subaccount_code;
+        }
+
+        if (!subaccountCode) {
+          throw new Error(
+            "Paystack did not return a valid subaccount code."
+          );
+        }
+      } catch (paystackError) {
+        school.paystackSubaccountStatus = "failed";
+
+        await school.save().catch((saveError) => {
+          console.error(
+            "Could not save failed subaccount status:",
+            saveError.message
+          );
+        });
+
+        console.error(
+          "School Paystack subaccount setup failed:",
+          paystackError.message
+        );
+
+        return res.status(502).json({
+          message:
+            "Your bank details could not be connected to Paystack. Online school-fee payments remain disabled. Please check the details and try again.",
+          paymentSetupStatus: "failed",
+          onlinePaymentsEnabled: false,
+        });
+      }
+    }
+
+    // Save the new bank details only after Paystack setup succeeds.
     school.bankDetails = {
       accountName: normalizedAccountName,
       accountNumber: normalizedAccountNumber,
@@ -608,27 +622,30 @@ export const updateSchoolBankDetails = async (req, res) => {
       isProvided: true,
     };
 
+    school.paystackSubaccountCode = subaccountCode;
+    school.paystackSubaccountStatus = "active";
+
+    if (needsSubaccountSetup) {
+      school.paystackSubaccountUpdatedAt = new Date();
+    }
+
     await school.save();
 
     return res.status(200).json({
-      message: "Bank details updated successfully",
+      message:
+        "Bank details saved and Paystack school-fee routing is active.",
       bankDetails: school.bankDetails,
+      onlinePaymentsEnabled: true,
+      paymentSetupStatus: "active",
     });
   } catch (error) {
     console.error("Update school bank details error:", error);
 
-    if (error.name === "ValidationError") {
-      return res.status(400).json({
-        message: error.message,
-      });
-    }
-
     return res.status(500).json({
-      message: "Server error while updating bank details",
+      message: "Server error while updating bank details.",
     });
   }
 };
-
 
 /* =========================================================
    GET REPORT CARD BRANDING
@@ -636,7 +653,7 @@ export const updateSchoolBankDetails = async (req, res) => {
 
 export const getReportCardBranding = async (req, res) => {
   try {
-    const schoolId = req.user?.school;
+    const schoolId = getSchoolId(req);
 
     if (!schoolId) {
       return res.status(400).json({
@@ -678,7 +695,7 @@ export const getReportCardBranding = async (req, res) => {
 
 export const updateReportCardBranding = async (req, res) => {
   try {
-    const schoolId = req.user?.school;
+    const schoolId = getSchoolId(req);
 
     if (!schoolId) {
       return res.status(400).json({
@@ -686,7 +703,10 @@ export const updateReportCardBranding = async (req, res) => {
       });
     }
 
-    const { principalSignature, principalStamp } = req.body;
+    const {
+      principalSignature,
+      principalStamp,
+    } = req.body;
 
     if (
       principalSignature === undefined &&
@@ -720,8 +740,8 @@ export const updateReportCardBranding = async (req, res) => {
       });
     }
 
-    // An empty string removes an existing image.
-    // An omitted field leaves its existing value unchanged.
+    // Empty strings remove existing images.
+    // Omitted fields remain unchanged.
     if (principalSignature !== undefined) {
       school.principalSignature = principalSignature.trim();
     }

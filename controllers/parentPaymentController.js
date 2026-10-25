@@ -1,6 +1,12 @@
+
+import crypto from "node:crypto";
+import mongoose from "mongoose";
+
 import Payment from "../models/Payment.js";
 import StudentFeeAccount from "../models/StudentFeeAccount.js";
 import Student from "../models/Student.js";
+import School from "../models/School.js";
+
 import {
   initializeTransaction,
   verifyTransaction,
@@ -9,14 +15,43 @@ import {
 const getSchoolId = (req) =>
   req.user?.school?._id || req.user?.school;
 
+const getFrontendUrl = () =>
+  (process.env.FRONTEND_URL || "http://localhost:3000").replace(
+    /\/+$/,
+    ""
+  );
+
+const toKobo = (amount) => Math.round(Number(amount) * 100);
+
+const generatePaymentReference = () =>
+  `FEES-${Date.now()}-${crypto.randomBytes(8).toString("hex").toUpperCase()}`;
+
+const createError = (message, statusCode = 500) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+};
+
+const savePaymentFailure = async (payment, metadata = {}) => {
+  payment.status = "failed";
+  payment.metadata = {
+    ...(payment.metadata?.toObject?.() || payment.metadata || {}),
+    ...metadata,
+  };
+
+  await payment.save();
+};
+
+/**
+ * Initialize a parent's school-fee payment through Paystack.
+ * The school's Paystack subaccount receives the school-fee payment.
+ */
 export const initializeParentSchoolFeePayment = async (req, res) => {
+  let payment;
+
   try {
     const schoolId = getSchoolId(req);
-
-    const {
-      studentFeeAccountId,
-      amount,
-    } = req.body;
+    const { studentFeeAccountId, amount } = req.body;
 
     if (!schoolId) {
       return res.status(400).json({
@@ -24,18 +59,57 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       });
     }
 
-    if (!studentFeeAccountId || amount === undefined) {
+    if (!mongoose.isValidObjectId(studentFeeAccountId)) {
       return res.status(400).json({
-        message:
-          "Student fee account and payment amount are required.",
+        message: "A valid student fee account ID is required.",
+      });
+    }
+
+    if (amount === undefined || amount === null || amount === "") {
+      return res.status(400).json({
+        message: "Payment amount is required.",
       });
     }
 
     const paymentAmount = Number(amount);
 
-    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+    if (
+      !Number.isFinite(paymentAmount) ||
+      paymentAmount <= 0 ||
+      !Number.isSafeInteger(toKobo(paymentAmount)) ||
+      Math.abs(paymentAmount * 100 - Math.round(paymentAmount * 100)) >
+        0.000001
+    ) {
       return res.status(400).json({
-        message: "Payment amount must be greater than zero.",
+        message:
+          "Payment amount must be positive and cannot have more than two decimal places.",
+      });
+    }
+
+    if (!req.user?._id || !req.user?.email) {
+      return res.status(401).json({
+        message:
+          "An authenticated parent account with a valid email address is required.",
+      });
+    }
+
+    const school = await School.findById(schoolId).select(
+      "name isActive paystackSubaccountCode paystackSubaccountStatus"
+    );
+
+    if (!school || !school.isActive) {
+      return res.status(404).json({
+        message: "School not found or is inactive.",
+      });
+    }
+
+    if (
+      !school.paystackSubaccountCode ||
+      school.paystackSubaccountStatus !== "active"
+    ) {
+      return res.status(409).json({
+        message:
+          "Online school-fee payments are unavailable. The school must complete its bank payment setup.",
       });
     }
 
@@ -64,23 +138,29 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       });
     }
 
-    if (feeAccount.balance <= 0 || feeAccount.status === "paid") {
+    const outstandingBalance = Number(feeAccount.balance);
+
+    if (
+      !Number.isFinite(outstandingBalance) ||
+      outstandingBalance <= 0 ||
+      feeAccount.status === "paid"
+    ) {
       return res.status(400).json({
         message:
           "This student's school fees have already been fully paid.",
       });
     }
 
-    if (paymentAmount > feeAccount.balance) {
+    if (toKobo(paymentAmount) > toKobo(outstandingBalance)) {
       return res.status(400).json({
-        message: `Payment amount cannot exceed the outstanding balance of ₦${feeAccount.balance.toLocaleString()}.`,
+        message: `Payment amount cannot exceed the outstanding balance of ₦${outstandingBalance.toLocaleString(
+          "en-NG"
+        )}.`,
       });
     }
 
-    /*
-     * Prevent multiple pending payments for the same
-     * student fee account.
-     */
+    // Avoid starting another payment while an earlier one is pending.
+    // A database-level constraint is also recommended for concurrent requests.
     const existingPendingPayment = await Payment.findOne({
       school: schoolId,
       studentFeeAccount: feeAccount._id,
@@ -90,22 +170,20 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
     });
 
     if (existingPendingPayment) {
-      return res.status(400).json({
+      return res.status(409).json({
         message:
           "There is already a pending payment for this student's school fees.",
         payment: {
           reference: existingPendingPayment.paymentReference,
           amount: existingPendingPayment.amount,
+          status: existingPendingPayment.status,
         },
       });
     }
 
-    const reference = `FEES-${Date.now()}-${Math.random()
-      .toString(36)
-      .substring(2, 10)
-      .toUpperCase()}`;
+    const reference = generatePaymentReference();
 
-    const payment = await Payment.create({
+    payment = await Payment.create({
       school: schoolId,
       subscription: null,
       studentFeeAccount: feeAccount._id,
@@ -119,6 +197,8 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       status: "pending",
       metadata: {
         student: student._id,
+        schoolPaystackSubaccountCode:
+          school.paystackSubaccountCode,
         studentId: student.studentId,
         totalAmountDue: feeAccount.totalAmountDue,
         amountPaidBeforePayment: feeAccount.amountPaid,
@@ -129,25 +209,22 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       },
     });
 
+    const callbackUrl =
+      `${getFrontendUrl()}/dashboard/parent/children/${student._id}/fees/callback`;
+
+    let paystackResponse;
+
     try {
-      /*
-       * Build the frontend callback URL.
-       *
-       * Example:
-       * http://localhost:3000/dashboard/parent/children/123/fees/callback
-       */
-      const frontendUrl =
-        process.env.FRONTEND_URL ||
-        "http://localhost:3000";
-
-      const callbackUrl =
-        `${frontendUrl}/dashboard/parent/children/${student._id}/fees/callback`;
-
-      const paystackResponse = await initializeTransaction({
+      paystackResponse = await initializeTransaction({
         email: req.user.email,
-        amount: Math.round(paymentAmount * 100),
+        amount: toKobo(paymentAmount),
         reference,
         callbackUrl,
+
+        // These are transaction fields, not just metadata.
+        subaccountCode: school.paystackSubaccountCode,
+        bearer: "subaccount",
+
         metadata: {
           paymentId: payment._id.toString(),
           schoolId: schoolId.toString(),
@@ -157,48 +234,66 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
           type: "school_fees",
         },
       });
-
-      return res.status(200).json({
-        message:
-          "Parent school fee payment initialized successfully.",
-        payment: {
-          id: payment._id,
-          reference: payment.paymentReference,
-          amount: payment.amount,
-          status: payment.status,
-        },
-        authorizationUrl:
-          paystackResponse.authorization_url,
-        accessCode: paystackResponse.access_code,
-      });
-    } catch (paystackError) {
-      payment.status = "failed";
-
-      payment.metadata = {
-        ...payment.metadata,
+    } catch (error) {
+      await savePaymentFailure(payment, {
         initializationError:
-          paystackError?.message ||
-          "Paystack initialization failed.",
-      };
+          error.message || "Paystack initialization failed.",
+      });
 
-      await payment.save();
+      console.error(
+        "Paystack school-fee initialization failed:",
+        error.message
+      );
 
-      throw paystackError;
+      return res.status(502).json({
+        message:
+          "Unable to initialize payment with Paystack. Please try again.",
+      });
     }
+
+    if (!paystackResponse?.authorization_url) {
+      await savePaymentFailure(payment, {
+        initializationError:
+          "Paystack did not return an authorization URL.",
+      });
+
+      return res.status(502).json({
+        message:
+          "Paystack did not return a payment link. Please try again.",
+      });
+    }
+
+    return res.status(200).json({
+      message: "School-fee payment initialized successfully.",
+      payment: {
+        id: payment._id,
+        reference: payment.paymentReference,
+        amount: payment.amount,
+        status: payment.status,
+      },
+      authorizationUrl: paystackResponse.authorization_url,
+      accessCode: paystackResponse.access_code,
+    });
   } catch (error) {
     console.error(
-      "Initialize parent school fee payment error:",
-      error
+      "Initialize parent school-fee payment error:",
+      error.message
     );
 
     return res.status(500).json({
       message:
-        "Server error while initializing parent school fee payment.",
+        "Server error while initializing parent school-fee payment.",
     });
   }
 };
 
+/**
+ * Verify a parent's school-fee payment directly with Paystack.
+ * The fee account and payment record are updated atomically.
+ */
 export const verifyParentSchoolFeePayment = async (req, res) => {
+  let session;
+
   try {
     const schoolId = getSchoolId(req);
     const { reference } = req.params;
@@ -209,9 +304,15 @@ export const verifyParentSchoolFeePayment = async (req, res) => {
       });
     }
 
-    if (!reference) {
+    if (!reference || typeof reference !== "string") {
       return res.status(400).json({
-        message: "Payment reference is required.",
+        message: "A valid payment reference is required.",
+      });
+    }
+
+    if (!req.user?._id) {
+      return res.status(401).json({
+        message: "Authentication is required.",
       });
     }
 
@@ -235,8 +336,6 @@ export const verifyParentSchoolFeePayment = async (req, res) => {
       });
     }
 
-    // Verify that this payment belongs to a child of the
-    // currently authenticated parent.
     const feeAccount = await StudentFeeAccount.findOne({
       _id: payment.studentFeeAccount,
       school: schoolId,
@@ -262,8 +361,6 @@ export const verifyParentSchoolFeePayment = async (req, res) => {
       });
     }
 
-    // Idempotency: if the payment has already been
-    // successfully processed, simply return the current state.
     if (payment.status === "successful") {
       return res.status(200).json({
         message: "Payment has already been verified successfully.",
@@ -272,44 +369,56 @@ export const verifyParentSchoolFeePayment = async (req, res) => {
       });
     }
 
+    // Never trust the browser callback alone.
     const paystackData = await verifyTransaction(reference);
 
     if (!paystackData) {
-      return res.status(400).json({
+      return res.status(502).json({
         message: "Unable to verify payment with Paystack.",
       });
     }
 
-    const verifiedAmount = Number(paystackData.amount) / 100;
-    const verifiedStatus = paystackData.status;
-
-    if (verifiedStatus !== "success") {
-      payment.status = "failed";
-
-      payment.metadata = {
-        ...payment.metadata,
-        verificationStatus: verifiedStatus,
-      };
-
-      await payment.save();
-
+    if (paystackData.reference !== reference) {
       return res.status(400).json({
-        message: "Paystack payment was not successful.",
-        status: verifiedStatus,
+        message: "Paystack returned a mismatched payment reference.",
       });
     }
 
-    if (verifiedAmount !== payment.amount) {
-      payment.status = "failed";
+    if (paystackData.status !== "success") {
+      const verificationStatus = paystackData.status || "unknown";
 
-      payment.metadata = {
-        ...payment.metadata,
+      await savePaymentFailure(payment, {
+        verificationStatus,
+      });
+
+      return res.status(400).json({
+        message: "Paystack payment was not successful.",
+        status: verificationStatus,
+      });
+    }
+
+    if (paystackData.currency !== "NGN") {
+      await savePaymentFailure(payment, {
+        verificationError: "Currency mismatch",
+        verifiedCurrency: paystackData.currency || null,
+      });
+
+      return res.status(400).json({
+        message: "The verified payment currency is not NGN.",
+      });
+    }
+
+    const verifiedAmount = Number(paystackData.amount) / 100;
+
+    if (
+      !Number.isFinite(verifiedAmount) ||
+      toKobo(verifiedAmount) !== toKobo(payment.amount)
+    ) {
+      await savePaymentFailure(payment, {
         verificationError: "Amount mismatch",
         expectedAmount: payment.amount,
         verifiedAmount,
-      };
-
-      await payment.save();
+      });
 
       return res.status(400).json({
         message:
@@ -317,103 +426,166 @@ export const verifyParentSchoolFeePayment = async (req, res) => {
       });
     }
 
-    // Re-read the fee account before applying the payment.
-    const currentFeeAccount = await StudentFeeAccount.findOne({
-      _id: payment.studentFeeAccount,
-      school: schoolId,
-      isActive: true,
+    // Compare the destination when Paystack includes it in its response.
+    // If omitted, this field alone cannot prove the settlement destination.
+    const verifiedSubaccountCode =
+      paystackData.subaccount?.subaccount_code;
+
+    const expectedSubaccountCode =
+      payment.metadata?.schoolPaystackSubaccountCode;
+
+    if (
+      verifiedSubaccountCode &&
+      expectedSubaccountCode &&
+      verifiedSubaccountCode !== expectedSubaccountCode
+    ) {
+      await savePaymentFailure(payment, {
+        verificationError: "Subaccount mismatch",
+        verifiedSubaccountCode,
+      });
+
+      return res.status(400).json({
+        message:
+          "The verified transaction's subaccount does not match the expected school.",
+      });
+    }
+
+    session = await mongoose.startSession();
+
+    let result;
+
+    await session.withTransaction(async () => {
+      const currentPayment = await Payment.findOne({
+        _id: payment._id,
+        school: schoolId,
+        type: "school_fees",
+        provider: "paystack",
+      }).session(session);
+
+      if (!currentPayment) {
+        throw createError("Payment record no longer exists.", 404);
+      }
+
+      // Handles repeated verification requests without applying the
+      // same payment to the fee account twice.
+      if (currentPayment.status === "successful") {
+        const existingFeeAccount =
+          await StudentFeeAccount.findById(
+            currentPayment.studentFeeAccount
+          ).session(session);
+
+        result = {
+          alreadyProcessed: true,
+          payment: currentPayment,
+          feeAccount: existingFeeAccount,
+        };
+
+        return;
+      }
+
+      const currentFeeAccount =
+        await StudentFeeAccount.findOne({
+          _id: currentPayment.studentFeeAccount,
+          school: schoolId,
+          isActive: true,
+        }).session(session);
+
+      if (!currentFeeAccount) {
+        throw createError("Student fee account not found.", 404);
+      }
+
+      const currentBalanceKobo = toKobo(currentFeeAccount.balance);
+      const paymentAmountKobo = toKobo(currentPayment.amount);
+
+      if (currentBalanceKobo <= 0) {
+        throw createError(
+          "The fee account is already paid. Manual reconciliation is required.",
+          409
+        );
+      }
+
+      if (paymentAmountKobo > currentBalanceKobo) {
+        throw createError(
+          "The payment would cause an overpayment. Manual reconciliation is required.",
+          409
+        );
+      }
+
+      const amountPaidBefore = Number(currentFeeAccount.amountPaid || 0);
+      const newAmountPaidKobo =
+        toKobo(amountPaidBefore) + paymentAmountKobo;
+
+      const totalDueKobo = toKobo(currentFeeAccount.totalAmountDue);
+      const newBalanceKobo = Math.max(
+        totalDueKobo - newAmountPaidKobo,
+        0
+      );
+
+      currentFeeAccount.amountPaid = newAmountPaidKobo / 100;
+      currentFeeAccount.balance = newBalanceKobo / 100;
+
+      if (newBalanceKobo === 0) {
+        currentFeeAccount.status = "paid";
+      } else if (newAmountPaidKobo > 0) {
+        currentFeeAccount.status = "partial";
+      } else {
+        currentFeeAccount.status = "unpaid";
+      }
+
+      currentPayment.status = "successful";
+      currentPayment.paidAt = new Date();
+      currentPayment.paystackTransactionId =
+        paystackData.id != null ? String(paystackData.id) : null;
+
+      currentPayment.metadata = {
+        ...(currentPayment.metadata?.toObject?.() ||
+          currentPayment.metadata ||
+          {}),
+        verifiedAmount,
+        verifiedCurrency: paystackData.currency,
+        paystackStatus: paystackData.status,
+        amountPaidBefore,
+        amountPaidAfter: newAmountPaidKobo / 100,
+        balanceAfterPayment: newBalanceKobo / 100,
+        verifiedAt: new Date().toISOString(),
+      };
+
+      await currentFeeAccount.save({ session });
+      await currentPayment.save({ session });
+
+      result = {
+        alreadyProcessed: false,
+        payment: currentPayment,
+        feeAccount: currentFeeAccount,
+      };
     });
 
-    if (!currentFeeAccount) {
-      return res.status(404).json({
-        message: "Student fee account no longer exists.",
-      });
-    }
-
-    if (currentFeeAccount.balance <= 0) {
-      payment.status = "failed";
-
-      payment.metadata = {
-        ...payment.metadata,
-        verificationError:
-          "Fee account was already fully paid before verification.",
-      };
-
-      await payment.save();
-
-      return res.status(400).json({
-        message:
-          "This student's school fees have already been fully paid.",
-      });
-    }
-
-    if (payment.amount > currentFeeAccount.balance) {
-      payment.status = "failed";
-
-      payment.metadata = {
-        ...payment.metadata,
-        verificationError: "Payment would cause overpayment",
-        currentBalance: currentFeeAccount.balance,
-      };
-
-      await payment.save();
-
-      return res.status(400).json({
-        message:
-          "This payment would exceed the student's outstanding balance.",
-      });
-    }
-
-    const amountPaidBefore = currentFeeAccount.amountPaid;
-    const newAmountPaid =
-      amountPaidBefore + payment.amount;
-
-    const newBalance =
-      currentFeeAccount.totalAmountDue - newAmountPaid;
-
-    currentFeeAccount.amountPaid = newAmountPaid;
-    currentFeeAccount.balance = Math.max(newBalance, 0);
-
-    if (currentFeeAccount.balance === 0) {
-      currentFeeAccount.status = "paid";
-    } else if (currentFeeAccount.amountPaid > 0) {
-      currentFeeAccount.status = "partial";
-    } else {
-      currentFeeAccount.status = "unpaid";
-    }
-
-    await currentFeeAccount.save();
-
-    payment.status = "successful";
-    payment.paidAt = new Date();
-    payment.paystackTransactionId =
-      paystackData.id?.toString() || null;
-
-    payment.metadata = {
-      ...payment.metadata,
-      verifiedAmount,
-      paystackStatus: verifiedStatus,
-      amountPaidBefore,
-      amountPaidAfter: currentFeeAccount.amountPaid,
-      balanceAfterPayment: currentFeeAccount.balance,
-    };
-
-    await payment.save();
-
     return res.status(200).json({
-      message: "School fee payment verified successfully.",
-      payment,
-      feeAccount: currentFeeAccount,
+      message: result.alreadyProcessed
+        ? "Payment has already been verified successfully."
+        : "School-fee payment verified successfully.",
+      payment: result.payment,
+      feeAccount: result.feeAccount,
     });
   } catch (error) {
     console.error(
-      "Verify parent school fee payment error:",
-      error
+      "Verify parent school-fee payment error:",
+      error.message
     );
+
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        message: error.message,
+      });
+    }
 
     return res.status(500).json({
       message:
-        "Server error while verifying parent school fee payment.",
+        "Server error while verifying parent school-fee payment.",
     });
+  } finally {
+    if (session) {
+      await session.endSession();
+    }
   }
 };
