@@ -445,6 +445,12 @@ const schoolSchema = new mongoose.Schema(
         type: Boolean,
         default: false,
       },
+
+      customDomainVerificationToken: {
+        type: String,
+        default: "",
+        select: false,
+      },
     },
 
     publicProfile: {
