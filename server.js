@@ -52,8 +52,27 @@ app.use(
 
       // Custom school websites are allowed only after their domain is verified.
       try {
-        const hostname = new URL(origin).hostname.toLowerCase().replace(/^www\./, "");
-        if (!hostname || hostname === "school-pilot.app") {
+        const originUrl = new URL(origin);
+        const hostname = originUrl.hostname.toLowerCase().replace(/^www\./, "");
+
+        // Platform school subdomains share this frontend deployment. Allow
+        // one-level HTTPS school subdomains, while keeping unrelated custom
+        // domains subject to the verified-domain check below.
+        const platformDomain = "school-pilot.app";
+        if (originUrl.protocol === "https:" && hostname.endsWith(`.${platformDomain}`)) {
+          const subdomain = hostname.slice(0, -`.${platformDomain}`.length);
+          const reservedSubdomains = new Set(["www", "api", "admin", "app", "mail"]);
+
+          if (
+            subdomain &&
+            !subdomain.includes(".") &&
+            !reservedSubdomains.has(subdomain)
+          ) {
+            return callback(null, true);
+          }
+        }
+
+        if (!hostname || hostname === platformDomain) {
           return callback(new Error("Not allowed by CORS"));
         }
 
