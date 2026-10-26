@@ -19,7 +19,7 @@ export const getPublicSchool = async (req, res) => {
       isActive: true,
       "website.enabled": true,
     }).select(
-      "name slug email phone address city state country logo publicProfile website -website.customDomainVerificationToken"
+      "name slug email phone address city state country logo publicProfile website"
     );
 
     if (!school) {
@@ -53,7 +53,7 @@ export const getSchoolWebsiteSettings = async (req, res) => {
     }
 
     const school = await School.findById(req.user.school).select(
-      "name slug logo publicProfile website -website.customDomainVerificationToken"
+      "name slug logo publicProfile website"
     );
 
     if (!school) {
