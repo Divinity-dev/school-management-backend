@@ -3,6 +3,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import connectDB from "./config/db.js";
+import School from "./models/School.js";
 
 import authRoutes from "./routes/authRoutes.js";
 import schoolRoutes from "./routes/schoolRoutes.js";
@@ -43,10 +44,32 @@ const allowedOrigins = [
 
 app.use(
   cors({
-    origin: (origin, callback) => {
+    origin: async (origin, callback) => {
       // Allow requests without an Origin header, such as server-to-server calls.
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
+      }
+
+      // Custom school websites are allowed only after their domain is verified.
+      try {
+        const hostname = new URL(origin).hostname.toLowerCase().replace(/^www\\./, "");
+        if (!hostname || hostname === "school-pilot.app") {
+          return callback(new Error("Not allowed by CORS"));
+        }
+
+        await connectDB();
+        const schoolOwnsVerifiedDomain = await School.exists({
+          "website.customDomain": { $in: [hostname, `www.${hostname}`] },
+          "website.customDomainVerified": true,
+          "website.enabled": true,
+          isActive: true,
+        });
+
+        if (schoolOwnsVerifiedDomain) {
+          return callback(null, true);
+        }
+      } catch (error) {
+        console.error("Custom-domain CORS check failed:", error.message);
       }
 
       console.error(`CORS blocked origin: ${origin}`);
