@@ -133,8 +133,10 @@ const configureVercelDomain = async (school) => {
     for (const host of hosts) {
       const projectDomain = await addDomainToVercelProject(host);
       let config = {};
+      let configChecked = false;
       try {
         config = await getVercelDomainConfig(host);
+        configChecked = true;
       } catch (configError) {
         // Registration may succeed before Vercel exposes configuration details.
         console.warn(`Could not retrieve Vercel DNS config for ${host}:`, configError.message);
@@ -143,6 +145,7 @@ const configureVercelDomain = async (school) => {
       domainResults.push({
         domain: host,
         verified: projectDomain?.verified !== false,
+        configChecked,
         misconfigured: Boolean(config?.misconfigured),
         dnsRecords: recordsFromVercelConfig(host, config, host.startsWith("www.")),
         verification: Array.isArray(projectDomain?.verification) ? projectDomain.verification : [],
@@ -150,7 +153,7 @@ const configureVercelDomain = async (school) => {
     }
 
     const allReady = domainResults.every(
-      (item) => item.verified && !item.misconfigured
+      (item) => item.verified && item.configChecked && !item.misconfigured
     );
     const dnsRecords = domainResults.flatMap((item) => item.dnsRecords);
     const vercelVerification = domainResults.flatMap((item) =>
