@@ -144,3 +144,50 @@ export const resolveCustomSchoolDomain = async (req, res) => {
     return res.status(500).json({ message: "Could not resolve custom domain." });
   }
 };
+
+/*
+ * Resolve a SchoolPilot subdomain (for example, brightfutureacademy) to
+ * the school's existing public website slug (for example, bright-future-academy).
+ * The root domain and www are intentionally handled by the main frontend.
+ */
+export const resolveSchoolSubdomain = async (req, res) => {
+  try {
+    const subdomain = typeof req.query.subdomain === "string"
+      ? req.query.subdomain.trim().toLowerCase()
+      : "";
+
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain)) {
+      return res.status(400).json({ message: "A valid school subdomain is required." });
+    }
+
+    const schools = await School.find({
+      isActive: true,
+      "website.enabled": true,
+      slug: { $exists: true, $ne: "" },
+    }).select("name slug");
+
+    const normalizedSubdomain = subdomain.replace(/[^a-z0-9]/g, "");
+    const matches = schools.filter(
+      (school) => school.slug.toLowerCase().replace(/[^a-z0-9]/g, "") === normalizedSubdomain
+    );
+
+    if (matches.length === 0) {
+      return res.status(404).json({ message: "No active school website is mapped to this subdomain." });
+    }
+
+    if (matches.length > 1) {
+      return res.status(409).json({
+        message: "This subdomain matches more than one school slug. Use a unique school subdomain.",
+      });
+    }
+
+    const school = matches[0];
+    res.set("Cache-Control", "public, max-age=60, s-maxage=60");
+    return res.status(200).json({
+      school: { name: school.name, slug: school.slug, subdomain },
+    });
+  } catch (error) {
+    console.error("Resolve school subdomain error:", error);
+    return res.status(500).json({ message: "Could not resolve school subdomain." });
+  }
+};
