@@ -9,6 +9,7 @@ import {
   setCustomSchoolDomain,
   verifyCustomSchoolDomain,
   resolveCustomSchoolDomain,
+  resolveSchoolSubdomain,
 } from "../controllers/customDomainController.js";
 
 import { protect, authorize } from "../middleware/authMiddleware.js";
@@ -28,6 +29,7 @@ const router = express.Router();
 
 router.get("/schools/:slug", getPublicSchool);
 router.get("/domains/resolve", resolveCustomSchoolDomain);
+router.get("/subdomains/resolve", resolveSchoolSubdomain);
 
 /*
 |--------------------------------------------------------------------------
