@@ -19,7 +19,7 @@ export const getPublicSchool = async (req, res) => {
       isActive: true,
       "website.enabled": true,
     }).select(
-      "name slug email phone address city state country logo publicProfile website"
+      "name slug email phone address city state country logo publicProfile website -website.customDomainVerificationToken"
     );
 
     if (!school) {
