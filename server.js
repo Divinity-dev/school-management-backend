@@ -34,6 +34,18 @@ import classTeacherRemarkRoutes from "./routes/classTeacherRemarkRoutes.js";
 
 const app = express();
 
+// API responses contain tenant-specific and authenticated data. Do not let browsers
+// or intermediary caches reuse a response across school subdomains/origins, or
+// revalidate an old response with stale CORS headers (304 Not Modified).
+app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+  res.vary("Origin");
+  next();
+});
+
  // CORS
 const allowedOrigins = [
   "https://www.school-pilot.app",
