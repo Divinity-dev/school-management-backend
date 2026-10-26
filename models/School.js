@@ -451,6 +451,29 @@ const schoolSchema = new mongoose.Schema(
         default: "",
         select: false,
       },
+
+      customDomainVercelConfigured: {
+        type: Boolean,
+        default: false,
+      },
+
+      customDomainHostingStatus: {
+        type: String,
+        enum: [
+          "not_configured",
+          "needs_configuration",
+          "pending_dns",
+          "active",
+          "failed",
+        ],
+        default: "not_configured",
+      },
+
+      customDomainHostingError: {
+        type: String,
+        default: "",
+        select: false,
+      },
     },
 
     publicProfile: {
