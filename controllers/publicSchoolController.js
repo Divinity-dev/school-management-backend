@@ -53,7 +53,7 @@ export const getSchoolWebsiteSettings = async (req, res) => {
     }
 
     const school = await School.findById(req.user.school).select(
-      "name slug logo publicProfile"
+      "name slug logo publicProfile website"
     );
 
     if (!school) {
