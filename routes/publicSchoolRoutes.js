@@ -8,6 +8,8 @@ import {
 import {
   setCustomSchoolDomain,
   verifyCustomSchoolDomain,
+  setupCustomSchoolDomain,
+  getCustomSchoolDomainStatus,
   resolveCustomSchoolDomain,
   resolveSchoolSubdomain,
 } from "../controllers/customDomainController.js";
@@ -70,6 +72,20 @@ router.post(
   protect,
   authorize("schoolAdmin"),
   verifyCustomSchoolDomain
+);
+
+router.post(
+  "/school-website/custom-domain/setup",
+  protect,
+  authorize("schoolAdmin"),
+  setupCustomSchoolDomain
+);
+
+router.get(
+  "/school-website/custom-domain/status",
+  protect,
+  authorize("schoolAdmin"),
+  getCustomSchoolDomainStatus
 );
 
 export default router;
