@@ -52,7 +52,7 @@ app.use(
 
       // Custom school websites are allowed only after their domain is verified.
       try {
-        const hostname = new URL(origin).hostname.toLowerCase().replace(/^www\\./, "");
+        const hostname = new URL(origin).hostname.toLowerCase().replace(/^www\./, "");
         if (!hostname || hostname === "school-pilot.app") {
           return callback(new Error("Not allowed by CORS"));
         }
