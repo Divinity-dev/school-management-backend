@@ -6,6 +6,7 @@ const normalizeDomain = (value) => {
   if (typeof value !== "string") return "";
   let domain = value.trim().toLowerCase();
   domain = domain.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "").replace(/\.$/, "");
+  domain = domain.replace(/^www\./, "");
   return domain;
 };
 
