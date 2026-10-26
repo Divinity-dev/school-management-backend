@@ -5,6 +5,12 @@ import {
   updateSchoolWebsiteSettings,
 } from "../controllers/publicSchoolController.js";
 
+import {
+  setCustomSchoolDomain,
+  verifyCustomSchoolDomain,
+  resolveCustomSchoolDomain,
+} from "../controllers/customDomainController.js";
+
 import { protect, authorize } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
@@ -21,6 +27,7 @@ const router = express.Router();
 */
 
 router.get("/schools/:slug", getPublicSchool);
+router.get("/domains/resolve", resolveCustomSchoolDomain);
 
 /*
 |--------------------------------------------------------------------------
@@ -47,6 +54,20 @@ router.patch(
   protect,
   authorize("schoolAdmin"),
   updateSchoolWebsiteSettings
+);
+
+router.post(
+  "/school-website/custom-domain",
+  protect,
+  authorize("schoolAdmin"),
+  setCustomSchoolDomain
+);
+
+router.post(
+  "/school-website/custom-domain/verify",
+  protect,
+  authorize("schoolAdmin"),
+  verifyCustomSchoolDomain
 );
 
 export default router;
