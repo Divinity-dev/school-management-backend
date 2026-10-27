@@ -73,19 +73,46 @@ const recordValue = (record) => {
   return record?.value || record?.address || record?.target || record?.hostname || "";
 };
 
-const recordsFromVercelConfig = (domain, config, isWww = false) => {
-  const records = [];
-  const ipv4 = config?.recommendedIPv4 || config?.recommendedIpv4 || [];
-  const cnames = config?.recommendedCNAME || config?.recommendedCname || [];
+const asRecordList = (value) => {
+  if (value === null || value === undefined || value === "") return [];
+  return (Array.isArray(value) ? value : [value]).filter(Boolean);
+};
 
-  for (const item of Array.isArray(ipv4) ? ipv4 : []) {
-    const value = recordValue(item);
-    if (value) records.push({ type: "A", name: isWww ? "www" : "@", value });
+const recordsFromVercelConfig = (domain, config, isWww = false) => {
+  const host = isWww ? "www" : "@";
+  const ipv4 = asRecordList(config?.recommendedIPv4 ?? config?.recommendedIpv4);
+  const cnames = asRecordList(config?.recommendedCNAME ?? config?.recommendedCname);
+  const ipv6 = asRecordList(config?.recommendedIPv6 ?? config?.recommendedIpv6);
+  const records = [];
+
+  // Vercel's config response may return a recommendation as a string or a list.
+  // Use the apex A/AAAA recommendation for the root domain and CNAME for www
+  // to avoid presenting conflicting record types for the same hostname.
+  if (isWww) {
+    for (const item of cnames) {
+      const value = recordValue(item);
+      if (value) records.push({ type: "CNAME", name: host, value });
+    }
+  } else {
+    for (const item of ipv4) {
+      const value = recordValue(item);
+      if (value) records.push({ type: "A", name: host, value });
+    }
+    for (const item of ipv6) {
+      const value = recordValue(item);
+      if (value) records.push({ type: "AAAA", name: host, value });
+    }
+
+    // Some domain configurations provide only a CNAME recommendation.
+    // Expose it as an ALIAS/ANAME-style apex target rather than a conflicting CNAME.
+    if (records.length === 0) {
+      for (const item of cnames) {
+        const value = recordValue(item);
+        if (value) records.push({ type: "ALIAS (or ANAME)", name: host, value });
+      }
+    }
   }
-  for (const item of Array.isArray(cnames) ? cnames : []) {
-    const value = recordValue(item);
-    if (value) records.push({ type: "CNAME", name: isWww ? "www" : "@", value });
-  }
+
   return records;
 };
 
