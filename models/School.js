@@ -641,8 +641,8 @@ schoolSchema.pre("validate", async function () {
   const baseSlug = String(this.name || "")
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9\\s-]/g, "")
-    .replace(/\\s+/g, "-")
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
 
