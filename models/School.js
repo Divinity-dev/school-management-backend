@@ -118,6 +118,21 @@ const publicProfileSchema = new mongoose.Schema(
       default: "",
     },
 
+    homepageImages: {
+      type: [String],
+      default: [],
+    },
+
+    homepageFeatures: {
+      type: [
+        {
+          title: { type: String, trim: true, default: "" },
+          description: { type: String, trim: true, default: "" },
+        },
+      ],
+      default: [],
+    },
+
     /*
     |--------------------------------------------------------------------------
     | About Us
