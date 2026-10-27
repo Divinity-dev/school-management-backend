@@ -15,11 +15,110 @@ import {
 const getSchoolId = (req) =>
   req.user?.school?._id || req.user?.school;
 
-const getFrontendUrl = () =>
-  (process.env.FRONTEND_URL || "http://localhost:3000").replace(
-    /\/+$/,
-    ""
+const getConfiguredFrontendOrigin = () => {
+  const configuredUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+
+  try {
+    return new URL(configuredUrl).origin;
+  } catch {
+    throw createError("FRONTEND_URL is not a valid URL.", 500);
+  }
+};
+
+/**
+ * Keep Paystack's callback on the same school website that initiated payment.
+ * The browser's Origin is accepted only when it is the configured platform
+ * frontend, this school's platform subdomain, this school's verified custom
+ * domain, or localhost during development.
+ */
+const getPaymentCallbackOrigin = async (req, schoolId) => {
+  const originHeader = req.get("origin");
+
+  if (!originHeader) {
+    return getConfiguredFrontendOrigin();
+  }
+
+  let originUrl;
+
+  try {
+    originUrl = new URL(originHeader);
+  } catch {
+    throw createError("The payment website origin is invalid.", 400);
+  }
+
+  if (
+    originUrl.origin !== originHeader ||
+    !["https:", "http:"].includes(originUrl.protocol)
+  ) {
+    throw createError("The payment website origin is invalid.", 400);
+  }
+
+  const origin = originUrl.origin;
+  const hostname = originUrl.hostname.toLowerCase();
+  const configuredOrigin = getConfiguredFrontendOrigin();
+
+  if (origin === configuredOrigin) {
+    return origin;
+  }
+
+  if (
+    hostname === "school-pilot.app" ||
+    hostname === "www.school-pilot.app"
+  ) {
+    return origin;
+  }
+
+  if (
+    process.env.NODE_ENV !== "production" &&
+    originUrl.protocol === "http:" &&
+    ["localhost", "127.0.0.1"].includes(hostname)
+  ) {
+    return origin;
+  }
+
+  const platformDomain = "school-pilot.app";
+
+  if (hostname.endsWith("." + platformDomain)) {
+    const subdomain = hostname.slice(0, -(platformDomain.length + 1));
+    const reserved = new Set(["www", "api", "admin", "app", "mail"]);
+
+    if (
+      subdomain &&
+      !subdomain.includes(".") &&
+      !reserved.has(subdomain)
+    ) {
+      const school = await School.findOne({
+        _id: schoolId,
+        slug: subdomain,
+        isActive: true,
+      }).select("_id");
+
+      if (school) {
+        return origin;
+      }
+    }
+  }
+
+  const bareHostname = hostname.replace(/^www\./, "");
+  const school = await School.findOne({
+    _id: schoolId,
+    "website.customDomain": {
+      $in: [hostname, bareHostname, "www." + bareHostname],
+    },
+    "website.customDomainVerified": true,
+    "website.enabled": true,
+    isActive: true,
+  }).select("_id");
+
+  if (school) {
+    return origin;
+  }
+
+  throw createError(
+    "Payment must be initiated from this school's verified website.",
+    400
   );
+};
 
 const toKobo = (amount) => Math.round(Number(amount) * 100);
 
@@ -181,6 +280,11 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       });
     }
 
+    const callbackOrigin = await getPaymentCallbackOrigin(
+      req,
+      schoolId
+    );
+
     const reference = generatePaymentReference();
 
     payment = await Payment.create({
@@ -210,7 +314,7 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
     });
 
     const callbackUrl =
-      `${getFrontendUrl()}/dashboard/parent/children/${student._id}/fees/callback`;
+      callbackOrigin + "/dashboard/parent/children/" + student._id + "/fees/callback";
 
     let paystackResponse;
 
@@ -279,6 +383,12 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       "Initialize parent school-fee payment error:",
       error.message
     );
+
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        message: error.message,
+      });
+    }
 
     return res.status(500).json({
       message:
