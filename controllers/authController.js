@@ -36,7 +36,7 @@ const generateEmailVerificationToken = () => {
 const generateUniqueSchoolSlug = async (schoolName) => {
   const baseSlug = String(schoolName || "")
     .normalize("NFKD")
-    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, "-")
