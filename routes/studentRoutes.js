@@ -64,10 +64,12 @@ router.post(
 );
 
 // View students.
-router.get("/", getStudents);
-router.get("/session/:sessionId", getStudentsBySession);
-router.get("/class/:classId", getStudentsByClass);
-router.get("/growth", getStudentGrowth);
+// Student directory endpoints expose personal and family contact information.
+// Keep access to school staff only; students and parents use their own portal APIs.
+router.get("/", authorize("schoolAdmin", "teacher"), getStudents);
+router.get("/session/:sessionId", authorize("schoolAdmin", "teacher"), getStudentsBySession);
+router.get("/class/:classId", authorize("schoolAdmin", "teacher"), getStudentsByClass);
+router.get("/growth", authorize("schoolAdmin", "teacher"), getStudentGrowth);
 
 // School administration.
 router.post(
@@ -96,6 +98,6 @@ router.patch(
 );
 
 // Keep the generic ID route after the named routes.
-router.get("/:id", getStudent);
+router.get("/:id", authorize("schoolAdmin", "teacher"), getStudent);
 
 export default router;

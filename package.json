@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "migrate:paystack-index": "node scripts/migratePaystackTransactionIdIndex.js"
   },
   "keywords": [
     "school-management",
