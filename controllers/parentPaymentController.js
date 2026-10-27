@@ -280,6 +280,11 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       });
     }
 
+    const callbackOrigin = await getPaymentCallbackOrigin(
+      req,
+      schoolId
+    );
+
     const reference = generatePaymentReference();
 
     payment = await Payment.create({
@@ -307,11 +312,6 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
         parent: req.user._id,
       },
     });
-
-    const callbackOrigin = await getPaymentCallbackOrigin(
-      req,
-      schoolId
-    );
 
     const callbackUrl =
       callbackOrigin + "/dashboard/parent/children/" + student._id + "/fees/callback";
@@ -383,6 +383,12 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
       "Initialize parent school-fee payment error:",
       error.message
     );
+
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        message: error.message,
+      });
+    }
 
     return res.status(500).json({
       message:
