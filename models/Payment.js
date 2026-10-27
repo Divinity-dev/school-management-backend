@@ -89,9 +89,8 @@ const paymentSchema = new mongoose.Schema(
 
     paystackTransactionId: {
       type: String,
-      default: null,
+      default: undefined,
       trim: true,
-      index: true,
     },
 
     status: {
