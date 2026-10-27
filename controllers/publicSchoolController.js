@@ -107,6 +107,8 @@ export const updateSchoolWebsiteSettings = async (req, res) => {
       /* ABOUT */
       tagline,
       description,
+      homepageImages,
+      homepageFeatures,
       history,
       mission,
       vision,
@@ -186,6 +188,38 @@ export const updateSchoolWebsiteSettings = async (req, res) => {
 
     if (description !== undefined) {
       publicProfile.description = description;
+    }
+
+    if (homepageImages !== undefined) {
+      if (!Array.isArray(homepageImages)) {
+        return res.status(400).json({
+          message: "Homepage images must be an array",
+        });
+      }
+
+      publicProfile.homepageImages = homepageImages
+        .filter((image) => typeof image === "string")
+        .map((image) => image.trim())
+        .slice(0, 3);
+    }
+
+    if (homepageFeatures !== undefined) {
+      if (!Array.isArray(homepageFeatures)) {
+        return res.status(400).json({
+          message: "Homepage features must be an array",
+        });
+      }
+
+      publicProfile.homepageFeatures = homepageFeatures
+        .filter((feature) => feature && typeof feature === "object")
+        .slice(0, 4)
+        .map((feature) => ({
+          title: typeof feature.title === "string" ? feature.title.trim() : "",
+          description:
+            typeof feature.description === "string"
+              ? feature.description.trim()
+              : "",
+        }));
     }
 
     if (history !== undefined) {
