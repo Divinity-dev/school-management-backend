@@ -33,6 +33,30 @@ const generateEmailVerificationToken = () => {
   };
 };
 
+const generateUniqueSchoolSlug = async (schoolName) => {
+  const baseSlug = String(schoolName || "")
+    .normalize("NFKD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (!baseSlug) {
+    throw new Error("School name cannot be used to generate a website address.");
+  }
+
+  let candidate = baseSlug;
+  let suffix = 2;
+
+  while (await School.exists({ slug: candidate })) {
+    candidate = `${baseSlug}-${suffix}`;
+    suffix += 1;
+  }
+
+  return candidate;
+};
+
 const generatePasswordResetOtp = () => {
   return crypto.randomInt(100000, 1000000).toString();
 };
@@ -200,13 +224,6 @@ export const registerSchool = async (req, res) => {
     const normalizedSchoolEmail = schoolEmail.trim().toLowerCase();
     const normalizedAdminEmail = adminEmail.trim().toLowerCase();
 
-    if (normalizedSchoolEmail === normalizedAdminEmail) {
-      return res.status(400).json({
-        message:
-          "The school email and administrator email must be different",
-      });
-    }
-
     const existingSchool = await School.findOne({
       email: normalizedSchoolEmail,
     });
@@ -226,6 +243,8 @@ export const registerSchool = async (req, res) => {
         message: "A user with this email already exists",
       });
     }
+
+    const schoolSlug = await generateUniqueSchoolSlug(schoolName);
 
     const adminUsername = await generateUsername(
       firstName.trim(),
@@ -251,6 +270,7 @@ export const registerSchool = async (req, res) => {
         [
           {
             name: schoolName.trim(),
+            slug: schoolSlug,
             email: normalizedSchoolEmail,
             phone: schoolPhone,
             address,
@@ -402,6 +422,7 @@ export const registerSchool = async (req, res) => {
       school: {
         id: createdSchool._id,
         name: createdSchool.name,
+        slug: createdSchool.slug,
         email: createdSchool.email,
       },
       user: {
