@@ -633,6 +633,34 @@ const schoolSchema = new mongoose.Schema(
   }
 );
 
+// Safety net: every school created through this Mongoose model must have a public slug,
+// even if a controller or future creation flow forgets to provide one.
+schoolSchema.pre("validate", async function () {
+  if (typeof this.slug === "string" && this.slug.trim()) return;
+
+  const baseSlug = String(this.name || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\\s-]/g, "")
+    .replace(/\\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  if (!baseSlug) {
+    throw new Error("School name cannot be used to generate a website address.");
+  }
+
+  let candidate = baseSlug;
+  let counter = 1;
+
+  while (await this.constructor.exists({ slug: candidate, _id: { $ne: this._id } })) {
+    counter += 1;
+    candidate = `${baseSlug}-${counter}`;
+  }
+
+  this.slug = candidate;
+});
+
 /*
 |--------------------------------------------------------------------------
 | Validation
