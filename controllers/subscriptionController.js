@@ -507,8 +507,23 @@ export const verifySubscriptionPaymentCallback = async (req, res) => {
 
       return res.status(200).json({
         message: "Payment has already been verified successfully.",
-        payment,
-        subscription,
+        payment: {
+          paymentReference: payment.paymentReference,
+          amount: payment.amount,
+          status: payment.status,
+          paidAt: payment.paidAt,
+          type: payment.type,
+          studentSeatsPurchased: payment.studentSeatsPurchased,
+        },
+        subscription: subscription
+          ? {
+              _id: subscription._id,
+              status: subscription.status,
+              studentLimit: subscription.studentLimit,
+              startsAt: subscription.startsAt,
+              expiresAt: subscription.expiresAt,
+            }
+          : null,
       });
     }
 
@@ -560,8 +575,23 @@ export const verifySubscriptionPaymentCallback = async (req, res) => {
       message: result.alreadyProcessed
         ? "Payment has already been processed successfully."
         : "Payment verified successfully.",
-      payment: result.payment,
-      subscription: result.subscription,
+      payment: {
+        paymentReference: result.payment.paymentReference,
+        amount: result.payment.amount,
+        status: result.payment.status,
+        paidAt: result.payment.paidAt,
+        type: result.payment.type,
+        studentSeatsPurchased: result.payment.studentSeatsPurchased,
+      },
+      subscription: result.subscription
+        ? {
+            _id: result.subscription._id,
+            status: result.subscription.status,
+            studentLimit: result.subscription.studentLimit,
+            startsAt: result.subscription.startsAt,
+            expiresAt: result.subscription.expiresAt,
+          }
+        : null,
     });
   } catch (error) {
     console.error("Paystack callback verification error:", error);
