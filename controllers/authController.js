@@ -554,7 +554,7 @@ export const login = async (req, res) => {
         { username: loginIdentifier },
         { email: loginIdentifier },
       ],
-    }).populate("school", "name isActive");
+    }).populate("school", "name slug isActive website.customDomain website.customDomainVerified website.customDomainHostingStatus");
 
     if (!user) {
       return res.status(401).json({
@@ -619,6 +619,12 @@ export const login = async (req, res) => {
           ? {
               id: user.school._id,
               name: user.school.name,
+              slug: user.school.slug,
+              website: {
+                customDomain: user.school.website?.customDomain || "",
+                customDomainVerified: user.school.website?.customDomainVerified === true,
+                customDomainHostingStatus: user.school.website?.customDomainHostingStatus || "not_configured",
+              },
             }
           : null,
       },
