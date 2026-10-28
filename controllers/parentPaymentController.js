@@ -287,15 +287,97 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
     });
 
     if (existingPendingPayment) {
-      return res.status(409).json({
-        message:
-          "There is already a pending payment for this student's school fees.",
-        payment: {
-          reference: existingPendingPayment.paymentReference,
-          amount: existingPendingPayment.amount,
-          status: existingPendingPayment.status,
-        },
-      });
+      const existingAuthorizationUrl =
+        existingPendingPayment.metadata?.paystackAuthorizationUrl;
+
+      // If initialization succeeded previously, let the parent resume the
+      // same transaction rather than creating a duplicate payment.
+      if (existingAuthorizationUrl) {
+        return res.status(200).json({
+          message: "Resuming the existing school-fee payment.",
+          payment: {
+            id: existingPendingPayment._id,
+            reference: existingPendingPayment.paymentReference,
+            amount: existingPendingPayment.amount,
+            status: existingPendingPayment.status,
+          },
+          authorizationUrl: existingAuthorizationUrl,
+          accessCode:
+            existingPendingPayment.metadata?.paystackAccessCode || null,
+        });
+      }
+
+      // Legacy pending records may have been created before Paystack
+      // initialization (for example, when origin validation failed).
+      // Check Paystack before releasing the pending-payment lock.
+      let existingPaystackTransaction;
+
+      try {
+        existingPaystackTransaction = await verifyTransaction(
+          existingPendingPayment.paymentReference
+        );
+      } catch (error) {
+        // Only treat Paystack's explicit "reference not found" response as
+        // proof that this attempt was never initialized. Network/API errors
+        // must not unlock the fee account because the outcome is uncertain.
+        if (!/transaction reference not found/i.test(error.message || "")) {
+          throw createError(
+            "Unable to safely check the existing pending payment with Paystack. Please try again shortly.",
+            502
+          );
+        }
+
+        existingPendingPayment.status = "cancelled";
+        existingPendingPayment.metadata = {
+          ...(existingPendingPayment.metadata?.toObject?.() ||
+            existingPendingPayment.metadata ||
+            {}),
+          cancellationReason:
+            "Paystack confirmed that no transaction exists for this reference.",
+          cancelledAt: new Date().toISOString(),
+        };
+        await existingPendingPayment.save();
+      }
+
+      if (existingPaystackTransaction) {
+        if (existingPaystackTransaction.status === "success") {
+          return res.status(409).json({
+            message:
+              "Paystack reports this payment as successful. Do not pay again. Refresh the fee account and contact the school if the balance has not updated.",
+            payment: {
+              reference: existingPendingPayment.paymentReference,
+              amount: existingPendingPayment.amount,
+              status: existingPendingPayment.status,
+            },
+          });
+        }
+
+        if (
+          !["abandoned", "failed"].includes(
+            existingPaystackTransaction.status
+          )
+        ) {
+          return res.status(409).json({
+            message:
+              "An existing Paystack transaction may still be active. Please wait or contact the school before starting another payment.",
+            payment: {
+              reference: existingPendingPayment.paymentReference,
+              amount: existingPendingPayment.amount,
+              status: existingPendingPayment.status,
+            },
+          });
+        }
+
+        existingPendingPayment.status = "cancelled";
+        existingPendingPayment.metadata = {
+          ...(existingPendingPayment.metadata?.toObject?.() ||
+            existingPendingPayment.metadata ||
+            {}),
+          cancellationReason: `Paystack transaction status: ${existingPaystackTransaction.status}.`,
+          cancelledAt: new Date().toISOString(),
+        };
+        await existingPendingPayment.save();
+      }
     }
 
     const callbackOrigin = await getPaymentCallbackOrigin(
@@ -384,6 +466,15 @@ export const initializeParentSchoolFeePayment = async (req, res) => {
           "Paystack did not return a payment link. Please try again.",
       });
     }
+
+    // Persist the Paystack link so a parent can resume the same pending
+    // transaction if they revisit the payment page before completing it.
+    payment.metadata = {
+      ...(payment.metadata?.toObject?.() || payment.metadata || {}),
+      paystackAuthorizationUrl: paystackResponse.authorization_url,
+      paystackAccessCode: paystackResponse.access_code || null,
+    };
+    await payment.save();
 
     return res.status(200).json({
       message: "School-fee payment initialized successfully.",
