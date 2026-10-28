@@ -529,6 +529,52 @@ export const verifyEmail = async (req, res) => {
 };
 
 
+// Return fresh account and school details for restoring browser sessions.
+export const getCurrentUser = async (req, res) => {
+  try {
+    const user = req.user;
+    let school = null;
+
+    if (user.school) {
+      school = await School.findById(user.school).select(
+        "name slug isActive website.customDomain website.customDomainVerified website.customDomainHostingStatus"
+      );
+
+      if (!school || school.isActive === false) {
+        return res.status(403).json({
+          message: "Your associated school is unavailable. Please contact support.",
+        });
+      }
+    }
+
+    return res.status(200).json({
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        username: user.username || null,
+        email: user.email || null,
+        role: user.role,
+        school: school
+          ? {
+              id: school._id,
+              name: school.name,
+              slug: school.slug,
+              website: {
+                customDomain: school.website?.customDomain || "",
+                customDomainVerified: school.website?.customDomainVerified === true,
+                customDomainHostingStatus: school.website?.customDomainHostingStatus || "not_configured",
+              },
+            }
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error("Get current user error:", error);
+    return res.status(500).json({ message: "Failed to validate the current session." });
+  }
+};
+
 // @desc    Login using email or username
 // @route   POST /api/auth/login
 // @access  Public
@@ -554,7 +600,7 @@ export const login = async (req, res) => {
         { username: loginIdentifier },
         { email: loginIdentifier },
       ],
-    }).populate("school", "name isActive");
+    }).populate("school", "name slug isActive website.customDomain website.customDomainVerified website.customDomainHostingStatus");
 
     if (!user) {
       return res.status(401).json({
@@ -619,6 +665,12 @@ export const login = async (req, res) => {
           ? {
               id: user.school._id,
               name: user.school.name,
+              slug: user.school.slug,
+              website: {
+                customDomain: user.school.website?.customDomain || "",
+                customDomainVerified: user.school.website?.customDomainVerified === true,
+                customDomainHostingStatus: user.school.website?.customDomainHostingStatus || "not_configured",
+              },
             }
           : null,
       },
