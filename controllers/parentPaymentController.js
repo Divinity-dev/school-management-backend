@@ -87,14 +87,32 @@ const getPaymentCallbackOrigin = async (req, schoolId) => {
       !subdomain.includes(".") &&
       !reserved.has(subdomain)
     ) {
-      const school = await School.findOne({
-        _id: schoolId,
-        slug: subdomain,
-        isActive: true,
-      }).select("_id");
+      // Generated school subdomains remove hyphens from the stored slug
+      // (for example, "bright-future-academy" becomes
+      // "brightfutureacademy.school-pilot.app").
+      if (/^[a-z0-9]+$/.test(subdomain)) {
+        const slugPattern = new RegExp("^" + subdomain.split("").join("-?") + "$", "i");
+        const matchingSchools = await School.find({
+          isActive: true,
+          slug: { $regex: slugPattern },
+        })
+          .select("_id slug")
+          .lean();
 
-      if (school) {
-        return origin;
+        const normalizedMatches = matchingSchools.filter(
+          (school) =>
+            String(school.slug || "").toLowerCase().replace(/-/g, "") === subdomain
+        );
+
+        const schoolMatchesCurrentAccount = normalizedMatches.some(
+          (school) => String(school._id) === String(schoolId)
+        );
+
+        // Reject ambiguous normalized slugs instead of authorizing one
+        // hostname for multiple active schools.
+        if (schoolMatchesCurrentAccount && normalizedMatches.length === 1) {
+          return origin;
+        }
       }
     }
   }
