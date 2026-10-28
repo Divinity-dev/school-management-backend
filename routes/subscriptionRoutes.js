@@ -4,6 +4,7 @@ import {
   getSubscriptionPricing,
   initializeSubscriptionPayment,
   verifySubscriptionPayment,
+  verifySubscriptionPaymentCallback,
   initializeAdditionalSeatsPayment,
   verifyAdditionalSeatsPayment,
   getTermSubscription,
@@ -19,8 +20,14 @@ import {
 const router = express.Router();
 
 // --------------------------------------------------
-// All subscription routes require authentication
-// --------------------------------------------------
+// Paystack return endpoint: it verifies the stored reference directly with
+// Paystack, so an expired login session cannot block payment recovery.
+router.get(
+  "/callback/verify/:reference",
+  verifySubscriptionPaymentCallback
+);
+
+// All remaining subscription routes require authentication.
 router.use(protect);
 
 // --------------------------------------------------

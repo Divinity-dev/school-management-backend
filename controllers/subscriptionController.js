@@ -467,7 +467,158 @@ export const initializeSubscriptionPayment = async (
 };
 
 // --------------------------------------------------
+// Verify subscription payments returned from Paystack without relying on a login session.
+// The payment reference is the lookup key, but Paystack remains the source of truth.
+export const verifySubscriptionPaymentCallback = async (req, res) => {
+  try {
+    const reference = String(req.params.reference || "").trim();
+    if (!/^(SUB|SEAT)-[A-Za-z0-9-]+$/i.test(reference)) {
+      return res.status(400).json({ message: "A valid payment reference is required." });
+    }
+
+    const payment = await Payment.findOne({
+      paymentReference: reference,
+      provider: "paystack",
+      type: { $in: ["initial_subscription", "additional_seats"] },
+    });
+
+    if (!payment) {
+      return res.status(404).json({
+        message: "Payment not found. Please contact support with your Paystack reference.",
+      });
+    }
+
+    if (payment.status === "successful") {
+      let subscription = payment.subscription
+        ? await Subscription.findOne({ _id: payment.subscription, school: payment.school })
+        : null;
+
+      if (!subscription && payment.type === "initial_subscription") {
+        subscription = await Subscription.findOne({
+          school: payment.school,
+          academicSession: payment.academicSession,
+          academicTerm: payment.academicTerm,
+        });
+        if (subscription) {
+          payment.subscription = subscription._id;
+          await payment.save();
+        }
+      }
+
+      return res.status(200).json({
+        message: "Payment has already been verified successfully.",
+        payment: {
+          paymentReference: payment.paymentReference,
+          amount: payment.amount,
+          status: payment.status,
+          paidAt: payment.paidAt,
+          type: payment.type,
+          studentSeatsPurchased: payment.studentSeatsPurchased,
+        },
+        subscription: subscription
+          ? {
+              _id: subscription._id,
+              status: subscription.status,
+              studentLimit: subscription.studentLimit,
+              startsAt: subscription.startsAt,
+              expiresAt: subscription.expiresAt,
+            }
+          : null,
+      });
+    }
+
+    if (payment.status !== "pending") {
+      return res.status(400).json({
+        message: `This payment is ${payment.status}. Do not pay again if Paystack charged you; contact support.`,
+        paymentStatus: payment.status,
+      });
+    }
+
+    const transaction = await verifyTransaction(reference);
+    if (transaction.reference !== payment.paymentReference) {
+      return res.status(400).json({ message: "Paystack reference did not match the payment record." });
+    }
+
+    if (transaction.status === "abandoned" || transaction.status === "failed") {
+      payment.status = transaction.status === "abandoned" ? "cancelled" : "failed";
+      payment.metadata = {
+        ...(payment.metadata || {}),
+        paystackStatus: transaction.status,
+        checkoutResolvedAt: new Date(),
+        failureReason: transaction.status === "abandoned"
+          ? "Paystack checkout was abandoned."
+          : "Paystack confirmed the transaction failed.",
+      };
+      await payment.save();
+      return res.status(400).json({
+        message: transaction.status === "abandoned"
+          ? "Paystack reports that this checkout was abandoned."
+          : "Paystack reports that this payment failed.",
+        paymentStatus: transaction.status,
+      });
+    }
+
+    if (transaction.status !== "success") {
+      return res.status(409).json({
+        message: "Paystack has not confirmed this payment as successful yet. No subscription changes were made.",
+        paymentStatus: transaction.status,
+      });
+    }
+
+    const { processSuccessfulSubscriptionPayment } = await import("./paymentController.js");
+    const result = await processSuccessfulSubscriptionPayment({
+      paymentId: payment._id,
+      transaction,
+    });
+
+    return res.status(200).json({
+      message: result.alreadyProcessed
+        ? "Payment has already been processed successfully."
+        : "Payment verified successfully.",
+      payment: {
+        paymentReference: result.payment.paymentReference,
+        amount: result.payment.amount,
+        status: result.payment.status,
+        paidAt: result.payment.paidAt,
+        type: result.payment.type,
+        studentSeatsPurchased: result.payment.studentSeatsPurchased,
+      },
+      subscription: result.subscription
+        ? {
+            _id: result.subscription._id,
+            status: result.subscription.status,
+            studentLimit: result.subscription.studentLimit,
+            startsAt: result.subscription.startsAt,
+            expiresAt: result.subscription.expiresAt,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error("Paystack callback verification error:", error);
+    const knownErrors = {
+      PAYMENT_REFERENCE_MISMATCH: [400, "Payment reference mismatch."],
+      PAYMENT_NOT_SUCCESSFUL: [409, "Paystack has not confirmed this payment as successful."],
+      PAYMENT_AMOUNT_MISMATCH: [400, "Payment amount does not match the expected amount. Please contact support."],
+      PAYMENT_CURRENCY_MISMATCH: [400, "Payment currency does not match the expected currency. Please contact support."],
+      PAYMENT_NOT_FOUND: [404, "Payment record was not found."],
+      SUBSCRIPTION_ALREADY_EXISTS: [409, "A subscription already exists for this term. Please contact support to reconcile the payment."],
+      SUBSCRIPTION_NOT_FOUND: [404, "The associated subscription was not found. Please contact support."],
+      ACADEMIC_SESSION_NOT_FOUND: [404, "The academic session linked to this payment was not found. Please contact support."],
+      ACADEMIC_TERM_NOT_FOUND: [404, "The academic term linked to this payment was not found. Please contact support."],
+      INVALID_STUDENT_SEAT_QUANTITY: [400, "The student-seat quantity is invalid. Please contact support."],
+      INVALID_ADDITIONAL_SEAT_QUANTITY: [400, "The additional-seat quantity is invalid. Please contact support."],
+    };
+    const mapped = knownErrors[error.message];
+    if (mapped) return res.status(mapped[0]).json({ message: mapped[1] });
+    return res.status(500).json({
+      message: "We could not complete payment verification. Do not pay again; contact support with your payment reference.",
+    });
+  }
+};
+
+// --------------------------------------------------
 // Verify initial subscription payment
+// --------------------------------------------------
 // --------------------------------------------------
 export const verifySubscriptionPayment = async (
   req,

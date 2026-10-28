@@ -1,9 +1,11 @@
 import express from "express";
+import { protect } from "../middleware/authMiddleware.js";
 
 import {
   register,
   registerSchool,
   login,
+  getCurrentUser,
   verifyEmail,
   forgotPassword,
   verifyResetOtp,
@@ -17,6 +19,8 @@ router.post("/register", register);
 router.post("/register-school", registerSchool);
 
 router.post("/login", login);
+
+router.get("/me", protect, getCurrentUser);
 
 router.get("/verify-email", verifyEmail);
 
