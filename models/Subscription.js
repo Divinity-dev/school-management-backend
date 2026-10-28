@@ -29,6 +29,19 @@ const subscriptionSchema = new mongoose.Schema(
       min: 1,
     },
 
+    // Student IDs explicitly assigned to this term's purchased seats.
+    // Schools choose which active students are covered; no implicit
+    // oldest-first allocation is applied.
+    allocatedStudents: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Student",
+        },
+      ],
+      default: [],
+    },
+
     amount: {
       type: Number,
       required: true,
