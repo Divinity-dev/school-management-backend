@@ -56,9 +56,30 @@ export const requireStudentSeatForResult = async (
     }
 
     // Bulk result entry.
+    // Only check seat eligibility for students with at least one
+    // score entered. Blank rows are skipped by submitTeacherResults
+    // and must not cause the whole submission to be rejected.
     if (Array.isArray(req.body?.results)) {
+      const resultsWithScores = req.body.results.filter((item) => {
+        const hasAssessmentScore =
+          Array.isArray(item?.assessmentScores) &&
+          item.assessmentScores.some(
+            (assessment) =>
+              assessment?.score !== "" &&
+              assessment?.score !== null &&
+              assessment?.score !== undefined
+          );
+
+        const hasExamScore =
+          item?.examScore !== "" &&
+          item?.examScore !== null &&
+          item?.examScore !== undefined;
+
+        return hasAssessmentScore || hasExamScore;
+      });
+
       targetStudentIds.push(
-        ...req.body.results
+        ...resultsWithScores
           .map((item) => item?.student)
           .filter(Boolean)
       );
