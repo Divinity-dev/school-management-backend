@@ -28,6 +28,11 @@ import {
 } from "../middleware/authMiddleware.js";
 
 import {
+  getStudentSeatAllocation,
+  updateStudentSeatAllocation,
+} from "../controllers/studentSeatController.js";
+
+import {
   requireActiveSubscription,
 } from "../middleware/subscriptionMiddleware.js";
 
@@ -70,6 +75,21 @@ router.get("/", authorize("schoolAdmin", "teacher"), getStudents);
 router.get("/session/:sessionId", authorize("schoolAdmin", "teacher"), getStudentsBySession);
 router.get("/class/:classId", authorize("schoolAdmin", "teacher"), getStudentsByClass);
 router.get("/growth", authorize("schoolAdmin", "teacher"), getStudentGrowth);
+
+// Purchased seat assignment. Must be registered before the generic /:id route.
+router.get(
+  "/seat-allocation",
+  authorize("schoolAdmin"),
+  requireActiveSubscription,
+  getStudentSeatAllocation
+);
+
+router.put(
+  "/seat-allocation",
+  authorize("schoolAdmin"),
+  requireActiveSubscription,
+  updateStudentSeatAllocation
+);
 
 // School administration.
 router.post(
