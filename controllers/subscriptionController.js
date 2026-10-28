@@ -190,19 +190,103 @@ export const initializeSubscriptionPayment = async (
       });
 
     if (existingPendingPayment) {
-      return res.status(409).json({
-        message:
-          "A subscription payment is already pending for this academic term.",
-        payment: {
-          id: existingPendingPayment._id,
-          reference:
-            existingPendingPayment.paymentReference,
-          amount: existingPendingPayment.amount,
-          studentSeatsPurchased:
-            existingPendingPayment.studentSeatsPurchased,
-          status: existingPendingPayment.status,
-        },
-      });
+      // A pending database record does not prove that the Paystack
+      // checkout is still payable. Verify the reference before blocking
+      // a retry, and never release it if Paystack cannot be reached.
+      let existingTransaction;
+
+      try {
+        existingTransaction = await verifyTransaction(
+          existingPendingPayment.paymentReference
+        );
+      } catch (verificationError) {
+        console.error(
+          "Could not verify existing pending subscription payment:",
+          verificationError
+        );
+
+        return res.status(503).json({
+          message:
+            "We could not verify your previous payment with Paystack. Please try again shortly; no new payment was created.",
+          payment: {
+            id: existingPendingPayment._id,
+            reference: existingPendingPayment.paymentReference,
+            amount: existingPendingPayment.amount,
+            studentSeatsPurchased:
+              existingPendingPayment.studentSeatsPurchased,
+            status: existingPendingPayment.status,
+          },
+        });
+      }
+
+      if (
+        existingTransaction.reference !==
+        existingPendingPayment.paymentReference
+      ) {
+        return res.status(502).json({
+          message:
+            "Paystack returned a different reference while checking your previous payment. Please contact support before retrying.",
+        });
+      }
+
+      if (existingTransaction.status === "success") {
+        const {
+          processSuccessfulSubscriptionPayment,
+        } = await import("./paymentController.js");
+
+        const result = await processSuccessfulSubscriptionPayment({
+          paymentId: existingPendingPayment._id,
+          transaction: existingTransaction,
+        });
+
+        return res.status(409).json({
+          message:
+            "Your previous subscription payment was successful and has been processed. Refresh the page to see your subscription.",
+          payment: result.payment,
+          subscription: result.subscription,
+        });
+      }
+
+      if (
+        existingTransaction.status === "abandoned" ||
+        existingTransaction.status === "failed"
+      ) {
+        // The provider has confirmed this attempt did not succeed.
+        // Move it out of the pending partial unique index so a fresh
+        // payment reference can be created safely.
+        existingPendingPayment.status =
+          existingTransaction.status === "abandoned"
+            ? "cancelled"
+            : "failed";
+
+        existingPendingPayment.metadata = {
+          ...(existingPendingPayment.metadata || {}),
+          paystackStatus: existingTransaction.status,
+          checkoutResolvedAt: new Date(),
+          failureReason:
+            existingTransaction.status === "abandoned"
+              ? "Paystack checkout was abandoned."
+              : "Paystack confirmed the transaction failed.",
+        };
+
+        await existingPendingPayment.save();
+      } else {
+        // Pending/ongoing (or an unfamiliar provider status) must not be
+        // treated as abandoned. Keep the guard to avoid duplicate charges.
+        return res.status(409).json({
+          message:
+            "Your previous Paystack payment is still processing. We have not started another payment to avoid a duplicate charge. Please wait or contact support if it remains pending.",
+          payment: {
+            id: existingPendingPayment._id,
+            reference: existingPendingPayment.paymentReference,
+            amount: existingPendingPayment.amount,
+            studentSeatsPurchased:
+              existingPendingPayment.studentSeatsPurchased,
+            status: existingPendingPayment.status,
+            paystackStatus: existingTransaction.status,
+          },
+        });
+      }
     }
 
     // --------------------------------------------------
@@ -475,19 +559,44 @@ export const verifySubscriptionPayment = async (
       );
 
     // --------------------------------------------------
-    // Keep abandoned checkout pending
+    // Resolve unsuccessful or unfinished checkouts
     // --------------------------------------------------
     if (
-      transaction.status ===
-      "abandoned"
+      transaction.status === "abandoned" ||
+      transaction.status === "failed"
     ) {
+      payment.status =
+        transaction.status === "abandoned"
+          ? "cancelled"
+          : "failed";
+
+      payment.metadata = {
+        ...(payment.metadata || {}),
+        paystackStatus: transaction.status,
+        checkoutResolvedAt: new Date(),
+        failureReason:
+          transaction.status === "abandoned"
+            ? "Paystack checkout was abandoned."
+            : "Paystack confirmed the transaction failed.",
+      };
+
+      await payment.save();
+
       return res.status(400).json({
         message:
-          "Payment was abandoned. No subscription was created.",
+          transaction.status === "abandoned"
+            ? "Payment was abandoned. No subscription was created. You can start a new payment."
+            : "Paystack confirmed that the payment failed. You can start a new payment.",
+        paymentStatus: transaction.status,
+        payment,
+      });
+    }
 
-        paymentStatus:
-          transaction.status,
-
+    if (transaction.status !== "success") {
+      return res.status(409).json({
+        message:
+          "Paystack has not confirmed this payment as successful yet. No subscription was created.",
+        paymentStatus: transaction.status,
         payment,
       });
     }
