@@ -5,7 +5,7 @@ const ALLOWED_TAGS = new Set(["p","br","strong","b","em","i","u","h2","h3","h4",
  * Remove active content and all attributes except safe link destinations.
  */
 export const sanitizePostHtml = (value = "") => {
-  let html = String(value);
+  let html = String(value)
     .replace(/<\\s*(script|style|iframe|object|embed|svg|math)[^>]*>[\\s\\S]*?<\\s*\\/\\s*\\1\\s*>/gi, "")
     .replace(/<!--([\\s\\S]*?)-->/g, "");
 
