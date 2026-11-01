@@ -489,8 +489,13 @@ export const getPublicSchoolPosts = async (req, res) => {
       })
       .lean();
 
+    const safePosts = posts.map((post) => ({
+      ...post,
+      content: sanitizePostHtml(post.content),
+    }));
+
     return res.status(200).json({
-      posts,
+      posts: safePosts,
     });
   } catch (error) {
     console.error("Get public school posts error:", error);
@@ -545,7 +550,7 @@ export const getPublicSchoolPost = async (req, res) => {
     }
 
     return res.status(200).json({
-      post,
+      post: { ...post, content: sanitizePostHtml(post.content) },
     });
   } catch (error) {
     console.error("Get public school post error:", error);
