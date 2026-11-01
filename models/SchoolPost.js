@@ -66,6 +66,15 @@ const schoolPostSchema = new mongoose.Schema(
       default: "",
     },
 
+    images: {
+      type: [{ type: String, trim: true }],
+      default: [],
+      validate: {
+        validator: (images) => images.length <= 2,
+        message: "A post can contain no more than two additional images.",
+      },
+    },
+
     /*
     |--------------------------------------------------------------------------
     | Event Information

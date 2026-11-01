@@ -1,5 +1,6 @@
 import SchoolPost from "../models/SchoolPost.js";
 import School from "../models/School.js";
+import { sanitizePostHtml } from "../utils/sanitizePostHtml.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -71,6 +72,7 @@ export const createSchoolPost = async (req, res) => {
       excerpt,
       content,
       coverImage,
+      images,
       eventDate,
       eventEndDate,
       location,
@@ -101,6 +103,16 @@ export const createSchoolPost = async (req, res) => {
       });
     }
 
+    const safeContent = sanitizePostHtml(content);
+    if (images !== undefined && (!Array.isArray(images) || images.length > 2 || images.some((url) => typeof url !== "string" || !/^https:\/\//i.test(url)))) {
+      return res.status(400).json({ message: "A post can contain up to two valid HTTPS image URLs." });
+    }
+    const safeImages = Array.isArray(images) ? images : [];
+
+    if (!safeContent.replace(/<[^>]*>/g, "").trim()) {
+      return res.status(400).json({ message: "Post content must contain readable text." });
+    }
+
     const slug = await generateUniqueSlug(
       title,
       req.user.school
@@ -114,8 +126,9 @@ export const createSchoolPost = async (req, res) => {
       title: title.trim(),
       slug,
       excerpt: excerpt?.trim() || "",
-      content: content.trim(),
+      content: safeContent,
       coverImage: coverImage || "",
+      images: safeImages,
       eventDate: type === "event" ? eventDate : null,
       eventEndDate: type === "event" ? eventEndDate || null : null,
       location: type === "event" ? location?.trim() || "" : "",
@@ -261,6 +274,7 @@ export const updateSchoolPost = async (req, res) => {
       excerpt,
       content,
       coverImage,
+      images,
       eventDate,
       eventEndDate,
       location,
@@ -304,11 +318,22 @@ export const updateSchoolPost = async (req, res) => {
         });
       }
 
-      post.content = content.trim();
+      const safeContent = sanitizePostHtml(content);
+      if (!safeContent.replace(/<[^>]*>/g, "").trim()) {
+        return res.status(400).json({ message: "Post content must contain readable text." });
+      }
+      post.content = safeContent;
     }
 
     if (coverImage !== undefined) {
       post.coverImage = coverImage;
+    }
+
+    if (images !== undefined) {
+      if (!Array.isArray(images) || images.length > 2 || images.some((url) => typeof url !== "string" || !/^https:\/\//i.test(url))) {
+        return res.status(400).json({ message: "A post can contain up to two valid HTTPS image URLs." });
+      }
+      post.images = images;
     }
 
     if (eventDate !== undefined) {
@@ -464,8 +489,13 @@ export const getPublicSchoolPosts = async (req, res) => {
       })
       .lean();
 
+    const safePosts = posts.map((post) => ({
+      ...post,
+      content: sanitizePostHtml(post.content),
+    }));
+
     return res.status(200).json({
-      posts,
+      posts: safePosts,
     });
   } catch (error) {
     console.error("Get public school posts error:", error);
@@ -520,7 +550,7 @@ export const getPublicSchoolPost = async (req, res) => {
     }
 
     return res.status(200).json({
-      post,
+      post: { ...post, content: sanitizePostHtml(post.content) },
     });
   } catch (error) {
     console.error("Get public school post error:", error);
