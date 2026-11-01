@@ -35,6 +35,8 @@ export const requireActiveSubscription = async (req, res, next) => {
 
     if (!subscription) {
       return res.status(403).json({
+        code: "SUBSCRIPTION_REQUIRED",
+        redirectTo: "/dashboard/school-admin/subscription",
         message:
           "An active subscription is required to perform this action.",
       });
@@ -46,6 +48,8 @@ export const requireActiveSubscription = async (req, res, next) => {
       new Date(subscription.expiresAt) < new Date()
     ) {
       return res.status(403).json({
+        code: "SUBSCRIPTION_EXPIRED",
+        redirectTo: "/dashboard/school-admin/subscription",
         message:
           "Your subscription for the current academic term has expired. Please renew your subscription.",
       });
