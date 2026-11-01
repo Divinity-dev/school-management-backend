@@ -104,7 +104,10 @@ export const createSchoolPost = async (req, res) => {
     }
 
     const safeContent = sanitizePostHtml(content);
-    const safeImages = Array.isArray(images) ? images.filter((url) => typeof url === "string" && /^https:\/\//i.test(url)).slice(0, 2) : [];
+    if (images !== undefined && (!Array.isArray(images) || images.length > 2 || images.some((url) => typeof url !== "string" || !/^https:\/\//i.test(url)))) {
+      return res.status(400).json({ message: "A post can contain up to two valid HTTPS image URLs." });
+    }
+    const safeImages = Array.isArray(images) ? images : [];
 
     if (!safeContent.replace(/<[^>]*>/g, "").trim()) {
       return res.status(400).json({ message: "Post content must contain readable text." });
@@ -315,7 +318,11 @@ export const updateSchoolPost = async (req, res) => {
         });
       }
 
-      post.content = sanitizePostHtml(content);
+      const safeContent = sanitizePostHtml(content);
+      if (!safeContent.replace(/<[^>]*>/g, "").trim()) {
+        return res.status(400).json({ message: "Post content must contain readable text." });
+      }
+      post.content = safeContent;
     }
 
     if (coverImage !== undefined) {
