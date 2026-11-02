@@ -7,6 +7,7 @@ import MarketingCampaignRecipient from "../models/MarketingCampaignRecipient.js"
 import MarketingMessage from "../models/MarketingMessage.js";
 import MarketingSuppression from "../models/MarketingSuppression.js";
 import MarketingWebhookEvent from "../models/MarketingWebhookEvent.js";
+import MarketingActivity from "../models/MarketingActivity.js";
 
 import {
   extractEmail,
@@ -57,6 +58,12 @@ const verifyResendWebhookSignature = (rawBody, headers, secret) => {
     return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
   });
 };
+
+const recordMarketingActivity = (req, activity) =>
+  MarketingActivity.create({
+    ...activity,
+    actor: req?.user?._id || null,
+  }).catch(() => null);
 
 const sendError = (res, error, fallback = "The request could not be completed.") => {
   const status = Number(error?.status) >= 400 && Number(error?.status) < 600
@@ -213,6 +220,11 @@ export const createMarketingContact = async (req, res) => {
       status: suppression ? "unsubscribed" : "new",
     });
 
+    await recordMarketingActivity(req, {
+      action: "contact.created",
+      description: `Added ${contact.schoolName} to marketing contacts.`,
+      contact: contact._id,
+    });
     return res.status(201).json({ success: true, message: "Contact added successfully.", contact });
   } catch (error) {
     if (error.code === 11000) {
@@ -230,6 +242,11 @@ export const archiveMarketingContact = async (req, res) => {
       { new: true }
     );
     if (!contact) return res.status(404).json({ success: false, message: "Contact not found." });
+    await recordMarketingActivity(req, {
+      action: "contact.archived",
+      description: `Archived ${contact.schoolName} from active marketing contacts.`,
+      contact: contact._id,
+    });
     return res.json({ success: true, message: "Contact archived successfully." });
   } catch (error) {
     return sendError(res, error, "Failed to archive contact.");
@@ -261,6 +278,12 @@ export const updateMarketingContact = async (req, res) => {
     );
 
     if (!contact) return res.status(404).json({ success: false, message: "Contact not found." });
+    await recordMarketingActivity(req, {
+      action: "contact.updated",
+      description: `Updated contact details for ${contact.schoolName}.`,
+      contact: contact._id,
+      metadata: { status: contact.status },
+    });
     return res.json({ success: true, message: "Contact updated successfully.", contact });
   } catch (error) {
     return sendError(res, error, "Failed to update contact.");
@@ -340,6 +363,11 @@ export const importMarketingContacts = async (req, res) => {
     if (operations.length) await MarketingContact.bulkWrite(operations, { ordered: false });
 
     const imported = operations.length;
+    await recordMarketingActivity(req, {
+      action: "contacts.imported",
+      description: `Imported ${imported} marketing contacts; skipped ${valid.length - imported} duplicates and ${invalid} invalid rows.`,
+      metadata: { totalRows: rows.length, imported, duplicates: valid.length - imported, invalid },
+    });
     return res.status(201).json({
       success: true,
       message: "Contact import completed.",
@@ -419,6 +447,12 @@ export const createMarketingCampaign = async (req, res) => {
       }))
     );
 
+    await recordMarketingActivity(req, {
+      action: "campaign.created",
+      description: `Created campaign "${campaign.name}" for ${eligible.length} contacts.`,
+      campaign: campaign._id,
+      metadata: { recipientCount: eligible.length },
+    });
     return res.status(201).json({
       success: true,
       message: "Campaign draft created successfully.",
@@ -557,6 +591,12 @@ export const sendMarketingCampaignBatch = async (req, res) => {
     }
 
     const counts = await refreshCampaignCounts(campaign._id);
+    await recordMarketingActivity(req, {
+      action: "campaign.batch_sent",
+      description: `Processed a campaign batch for "${campaign.name}": ${eligible.length} attempted, ${counts.failed} failed so far.`,
+      campaign: campaign._id,
+      metadata: { batchSize: eligible.length, counts },
+    });
     return res.json({
       success: true,
       message: counts.queued > 0
@@ -655,7 +695,7 @@ export const replyToMarketingMessage = async (req, res) => {
       }),
     });
 
-    await MarketingMessage.create({
+    const outboundMessage = await MarketingMessage.create({
       direction: "outbound",
       resendEmailId: result.id || "",
       contact: message.contact,
@@ -670,9 +710,31 @@ export const replyToMarketingMessage = async (req, res) => {
       receivedAt: new Date(),
     });
 
+    await recordMarketingActivity(req, {
+      action: "inbox.reply_sent",
+      description: `Replied to ${recipient} from the SchoolPilot marketing inbox.`,
+      contact: message.contact,
+      campaign: message.campaign,
+      message: outboundMessage._id,
+    });
     return res.json({ success: true, message: "Reply sent successfully." });
   } catch (error) {
     return sendError(res, error, "Failed to send the reply.");
+  }
+};
+
+export const listMarketingActivities = async (req, res) => {
+  try {
+    const activities = await MarketingActivity.find()
+      .populate("actor", "name email")
+      .populate("contact", "schoolName email")
+      .populate("campaign", "name subject")
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+    return res.json({ success: true, activities });
+  } catch (error) {
+    return sendError(res, error, "Failed to load marketing activity history.");
   }
 };
 
@@ -703,6 +765,11 @@ export const unsubscribeMarketingEmail = async (req, res) => {
       { upsert: true }
     );
     await MarketingContact.updateOne({ email }, { $set: { status: "unsubscribed" } });
+    await recordMarketingActivity(null, {
+      action: "contact.unsubscribed",
+      description: `A contact unsubscribed from SchoolPilot marketing emails (${email}).`,
+      metadata: { email },
+    });
 
     return res.status(200).send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribed</title></head><body style="font-family:Arial,sans-serif;background:#f8fafc;padding:48px 20px;color:#0f172a"><main style="max-width:520px;margin:auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:32px;text-align:center"><h1 style="margin-top:0">You are unsubscribed</h1><p style="color:#475569">We will no longer send SchoolPilot marketing emails to this address.</p></main></body></html>`);
   } catch (error) {
