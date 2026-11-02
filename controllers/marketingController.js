@@ -686,6 +686,10 @@ export const unsubscribeMarketingEmail = async (req, res) => {
       return res.status(400).send("This unsubscribe link is invalid or has expired.");
     }
 
+    if (req.method === "GET") {
+      return res.status(200).send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe from SchoolPilot</title></head><body style="font-family:Arial,sans-serif;background:#f8fafc;padding:48px 20px;color:#0f172a"><main style="max-width:520px;margin:auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:32px;text-align:center"><h1 style="margin-top:0">Unsubscribe from SchoolPilot emails?</h1><p style="color:#475569">Confirm below if you no longer want to receive SchoolPilot outreach emails at this address.</p><form method="POST" action="/api/marketing/unsubscribe/${encodeURIComponent(req.params.token)}"><button type="submit" style="margin-top:16px;border:0;border-radius:10px;background:#047857;color:#fff;padding:12px 20px;font-weight:600;cursor:pointer">Confirm unsubscribe</button></form></main></body></html>`);
+    }
+
     await MarketingSuppression.updateOne(
       { email },
       { $setOnInsert: { email, reason: "unsubscribed", source: "email-link" } },
