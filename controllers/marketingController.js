@@ -440,6 +440,7 @@ export const createMarketingCampaign = async (req, res) => {
       html,
       text: String(req.body.text || htmlToText(html)),
       recipientCount: eligible.length,
+      queuedCount: eligible.length,
       createdBy: req.user._id,
     });
 
@@ -679,7 +680,7 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
     if (blocked.length) {
       await MarketingCampaignRecipient.updateMany(
         { _id: { $in: blocked.map((item) => item._id) } },
-        { $set: { status: "failed", error: "Recipient is suppressed or no longer eligible." } }
+        { $set: { status: "suppressed", error: "Recipient is suppressed or no longer eligible." } }
       );
     }
 
