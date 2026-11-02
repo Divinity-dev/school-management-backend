@@ -502,7 +502,7 @@ export const sendMarketingCampaignBatch = async (req, res) => {
       status: { $in: ["queued", "failed"] },
     })
       .sort({ createdAt: 1 })
-      .limit(50)
+      .limit(10)
       .populate("contact", "schoolName email status archivedAt")
       .lean();
 
