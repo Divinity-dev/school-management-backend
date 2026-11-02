@@ -1,4 +1,4 @@
-import { Webhook } from "svix";
+import crypto from "node:crypto";
 import XLSX from "xlsx";
 
 import MarketingContact from "../models/MarketingContact.js";
@@ -17,6 +17,46 @@ import {
 } from "../utils/marketingEmail.js";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const verifyResendWebhookSignature = (rawBody, headers, secret) => {
+  const id = String(headers["svix-id"] || "");
+  const timestamp = String(headers["svix-timestamp"] || "");
+  const signatureHeader = String(headers["svix-signature"] || "");
+  const timestampNumber = Number(timestamp);
+
+  if (
+    !secret ||
+    !id ||
+    !timestamp ||
+    !signatureHeader ||
+    !Number.isFinite(timestampNumber) ||
+    Math.abs(Date.now() / 1000 - timestampNumber) > 300
+  ) {
+    return false;
+  }
+
+  const encodedSecret = secret.replace(/^whsec_/, "");
+  let key;
+  try {
+    key = Buffer.from(encodedSecret, "base64");
+  } catch {
+    return false;
+  }
+  if (!key.length) return false;
+
+  const signedContent = `${id}.${timestamp}.${rawBody}`;
+  const expected = Buffer.from(
+    crypto.createHmac("sha256", key).update(signedContent).digest("base64")
+  );
+
+  return signatureHeader.split(" ").some((versionedSignature) => {
+    const [version, suppliedValue] = versionedSignature.split(",");
+    if (version !== "v1" || !suppliedValue) return false;
+
+    const supplied = Buffer.from(suppliedValue);
+    return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+  });
+};
 
 const sendError = (res, error, fallback = "The request could not be completed.") => {
   const status = Number(error?.status) >= 400 && Number(error?.status) < 600
@@ -666,13 +706,11 @@ export const handleResendMarketingWebhook = async (req, res) => {
     }
 
     const rawBody = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : String(req.body || "");
-    const webhook = new Webhook(process.env.RESEND_WEBHOOK_SECRET);
-    const event = webhook.verify(rawBody, {
-      "svix-id": req.headers["svix-id"],
-      "svix-timestamp": req.headers["svix-timestamp"],
-      "svix-signature": req.headers["svix-signature"],
-    });
+    if (!verifyResendWebhookSignature(rawBody, req.headers, process.env.RESEND_WEBHOOK_SECRET)) {
+      return res.status(400).json({ success: false, message: "Invalid webhook signature." });
+    }
 
+    const event = JSON.parse(rawBody);
     const eventId = String(req.headers["svix-id"] || "");
     const data = event.data || {};
 
@@ -764,9 +802,6 @@ export const handleResendMarketingWebhook = async (req, res) => {
 
     return res.status(200).json({ received: true });
   } catch (error) {
-    if (error?.name === "WebhookVerificationError") {
-      return res.status(400).json({ success: false, message: "Invalid webhook signature." });
-    }
     return res.status(500).json({ success: false, message: "Webhook processing failed." });
   }
 };
