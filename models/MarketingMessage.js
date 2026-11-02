@@ -3,7 +3,9 @@ import mongoose from "mongoose";
 const marketingMessageSchema = new mongoose.Schema(
   {
     direction: { type: String, enum: ["inbound", "outbound"], required: true, index: true },
-    resendEmailId: { type: String, default: "", index: true },
+    // Leave this field absent when Resend has not supplied an ID. A sparse unique
+    // index excludes missing values, but it still indexes empty strings.
+    resendEmailId: { type: String, default: undefined },
     contact: { type: mongoose.Schema.Types.ObjectId, ref: "MarketingContact", default: null, index: true },
     campaign: { type: mongoose.Schema.Types.ObjectId, ref: "MarketingCampaign", default: null, index: true },
     from: { type: String, required: true },
