@@ -7,14 +7,17 @@ export const extractEmail = (value = "") => {
   return normalizeEmail(match?.[0] || value);
 };
 
-const getUnsubscribeSecret = () =>
-  process.env.MARKETING_UNSUBSCRIBE_SECRET || process.env.JWT_SECRET;
+const getUnsubscribeSecret = () => process.env.MARKETING_UNSUBSCRIBE_SECRET;
 
 export const createUnsubscribeToken = (email) => {
+  const secret = getUnsubscribeSecret();
+  if (!secret || secret.length < 32) {
+    throw new Error("MARKETING_UNSUBSCRIBE_SECRET must be configured with at least 32 characters.");
+  }
   const normalized = normalizeEmail(email);
   const encoded = Buffer.from(normalized).toString("base64url");
   const signature = crypto
-    .createHmac("sha256", getUnsubscribeSecret())
+    .createHmac("sha256", secret)
     .update(encoded)
     .digest("base64url");
 
@@ -23,10 +26,11 @@ export const createUnsubscribeToken = (email) => {
 
 export const readUnsubscribeToken = (token = "") => {
   const [encoded, suppliedSignature] = String(token).split(".");
-  if (!encoded || !suppliedSignature || !getUnsubscribeSecret()) return null;
+  const secret = getUnsubscribeSecret();
+  if (!encoded || !suppliedSignature || !secret || secret.length < 32) return null;
 
   const expectedSignature = crypto
-    .createHmac("sha256", getUnsubscribeSecret())
+    .createHmac("sha256", secret)
     .update(encoded)
     .digest("base64url");
 
