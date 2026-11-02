@@ -171,18 +171,20 @@ export const listMarketingContacts = async (req, res) => {
       ];
     }
 
-    const [contacts, total] = await Promise.all([
+    const [contacts, total, categories] = await Promise.all([
       MarketingContact.find(filter)
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
       MarketingContact.countDocuments(filter),
+      MarketingContact.distinct("category", { archivedAt: null }),
     ]);
 
     return res.json({
       success: true,
       contacts,
+      categories: categories.filter(Boolean).sort(),
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
   } catch (error) {
