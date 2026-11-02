@@ -413,7 +413,7 @@ export const createMarketingCampaign = async (req, res) => {
     const contacts = await MarketingContact.find({
       _id: { $in: contactIds },
       archivedAt: null,
-      status: { $nin: ["unsubscribed", "not_interested", "bounced"] },
+      status: { $nin: ["unsubscribed", "not_interested", "bounced", "complained", "suppressed"] },
     }).lean();
 
     if (!contacts.length) {
@@ -519,7 +519,7 @@ export const sendMarketingCampaignBatch = async (req, res) => {
         recipient.contact &&
         !recipient.contact.archivedAt &&
         !suppressions.has(recipient.email) &&
-        !["unsubscribed", "not_interested", "bounced"].includes(recipient.contact.status)
+        !["unsubscribed", "not_interested", "bounced", "complained", "suppressed"].includes(recipient.contact.status)
     );
 
     const blocked = queued.filter((recipient) => !eligible.some((item) => String(item._id) === String(recipient._id)));
@@ -666,7 +666,7 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
       recipient.contact &&
       !recipient.contact.archivedAt &&
       !suppressions.has(recipient.email) &&
-      !["unsubscribed", "not_interested", "bounced"].includes(recipient.contact.status)
+      !["unsubscribed", "not_interested", "bounced", "complained", "suppressed"].includes(recipient.contact.status)
     );
     const blocked = batch.filter((recipient) =>
       !eligible.some((item) => String(item._id) === String(recipient._id))
@@ -1057,45 +1057,64 @@ export const handleResendMarketingWebhook = async (req, res) => {
       if (recentRecipient?.campaign?._id) await refreshCampaignCounts(recentRecipient.campaign._id);
     }
 
-    if (["email.sent", "email.delivered", "email.bounced", "email.complained"].includes(event.type) && data.email_id) {
+    if (
+      ["email.sent", "email.delivered", "email.bounced", "email.complained", "email.failed", "email.suppressed"].includes(event.type) &&
+      data.email_id
+    ) {
       const recipient = await MarketingCampaignRecipient.findOne({ resendEmailId: data.email_id });
       if (recipient) {
         const nextStatus = event.type === "email.sent"
           ? "sent"
           : event.type === "email.delivered"
             ? "delivered"
-            : event.type === "email.complained" ? "complained" : "bounced";
+            : event.type === "email.bounced"
+              ? "bounced"
+              : event.type === "email.complained"
+                ? "complained"
+                : event.type === "email.failed"
+                  ? "failed"
+                  : "suppressed";
         const allowedCurrentStatuses = nextStatus === "sent"
           ? ["scheduled"]
           : nextStatus === "delivered"
             ? ["sent", "scheduled"]
             : ["sent", "scheduled", "delivered"];
 
-        const recipientUpdate = await MarketingCampaignRecipient.updateOne(
+        await MarketingCampaignRecipient.updateOne(
           { _id: recipient._id, status: { $in: allowedCurrentStatuses } },
           {
             $set: {
               status: nextStatus,
               ...(nextStatus === "sent" ? { sentAt: new Date() } : {}),
               ...(nextStatus === "delivered" ? { deliveredAt: new Date() } : {}),
+              ...(nextStatus === "failed" ? {
+                error: data.failed?.message || data.error?.message || "Resend reported a send failure.",
+              } : {}),
+              ...(nextStatus === "suppressed" ? {
+                error: data.suppressed?.message || "Resend suppressed this recipient.",
+              } : {}),
             },
           }
         );
 
-        if (nextStatus === "sent" && recipientUpdate.modifiedCount > 0) {
+        if (nextStatus === "sent") {
           await MarketingContact.updateOne(
             { email: recipient.email, status: "new" },
             { $set: { status: "contacted", lastContactedAt: new Date() } }
           );
         }
 
-        if (nextStatus === "bounced" || nextStatus === "complained") {
+        if (["bounced", "complained", "suppressed"].includes(nextStatus)) {
           await MarketingSuppression.updateOne(
             { email: recipient.email },
             {
               $setOnInsert: {
                 email: recipient.email,
-                reason: nextStatus === "bounced" ? "bounced" : "complaint",
+                reason: nextStatus === "bounced"
+                  ? "bounced"
+                  : nextStatus === "complained"
+                    ? "complaint"
+                    : "provider",
                 source: "resend-webhook",
               },
             },
@@ -1103,7 +1122,7 @@ export const handleResendMarketingWebhook = async (req, res) => {
           );
           await MarketingContact.updateOne(
             { email: recipient.email },
-            { $set: { status: "bounced" } }
+            { $set: { status: nextStatus } }
           );
         }
         await refreshCampaignCounts(recipient.campaign);
