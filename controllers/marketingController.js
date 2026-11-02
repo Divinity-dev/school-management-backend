@@ -465,7 +465,7 @@ export const sendMarketingCampaignBatch = async (req, res) => {
     })
       .sort({ createdAt: 1 })
       .limit(50)
-      .populate("contact", "schoolName email status")
+      .populate("contact", "schoolName email status archivedAt")
       .lean();
 
     if (!queued.length) {
@@ -480,6 +480,7 @@ export const sendMarketingCampaignBatch = async (req, res) => {
     const eligible = queued.filter(
       (recipient) =>
         recipient.contact &&
+        !recipient.contact.archivedAt &&
         !suppressions.has(recipient.email) &&
         !["unsubscribed", "not_interested", "bounced"].includes(recipient.contact.status)
     );
@@ -563,6 +564,10 @@ export const sendMarketingCampaignBatch = async (req, res) => {
       batchSize: eligible.length,
     });
   } catch (error) {
+    await MarketingCampaign.updateOne(
+      { _id: req.params.id, status: "sending" },
+      { $set: { status: "partial" } }
+    ).catch(() => {});
     return sendError(res, error, "Failed to send campaign batch.");
   }
 };
