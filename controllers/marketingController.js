@@ -175,11 +175,6 @@ export const listMarketingContacts = async (req, res) => {
         { schoolName: { $regex: q, $options: "i" } },
         { email: { $regex: q, $options: "i" } },
         { location: { $regex: q, $options: "i" } },
-      ];");
-      filter.$or = [
-        { schoolName: { $regex: q, $options: "i" } },
-        { email: { $regex: q, $options: "i" } },
-        { location: { $regex: q, $options: "i" } },
       ];
     }
 
