@@ -58,10 +58,19 @@ export const getUnsubscribeUrl = (email) => {
   return `${baseUrl}/api/marketing/unsubscribe/${createUnsubscribeToken(email)}`;
 };
 
+const escapeHtml = (value = "") =>
+  String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]);
+
 export const personalizeCampaignHtml = (html, contact) => {
   const personalized = String(html || "")
-    .replace(/{{\s*schoolName\s*}}/gi, contact.schoolName || "there")
-    .replace(/{{\s*email\s*}}/gi, contact.email || "");
+    .replace(/{{\s*schoolName\s*}}/gi, () => escapeHtml(contact.schoolName || "there"))
+    .replace(/{{\s*email\s*}}/gi, () => escapeHtml(contact.email || ""));
 
   const unsubscribeUrl = getUnsubscribeUrl(contact.email);
   return `${personalized}
