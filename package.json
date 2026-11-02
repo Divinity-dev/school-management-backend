@@ -27,7 +27,8 @@
     "mongoose": "^8.24.4",
     "multer": "^2.4.0",
     "nodemailer": "^10.0.10",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "svix": "^1.83.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
