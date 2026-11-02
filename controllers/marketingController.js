@@ -118,7 +118,7 @@ export const listMarketingContacts = async (req, res) => {
     if (req.query.status) filter.status = req.query.status;
     if (req.query.category) filter.category = req.query.category;
     if (req.query.q) {
-      const q = String(req.query.q).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\const q = String(req.query.q).trim();
+      const q = [...String(req.query.q).trim()].map((character) => "\\.^$*+?{}()|[]".includes(character) ? "\\" + character : character).join("");
       filter.$or = [
         { schoolName: { $regex: q, $options: "i" } },
         { email: { $regex: q, $options: "i" } },
