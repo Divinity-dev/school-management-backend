@@ -16,6 +16,7 @@ import {
   getMarketingInboxMessage,
   replyToMarketingMessage,
   listMarketingSuppressions,
+  listMarketingActivities,
   unsubscribeMarketingEmail,
   handleResendMarketingWebhook,
 } from "../controllers/marketingController.js";
@@ -64,5 +65,6 @@ router.get("/inbox/:id", getMarketingInboxMessage);
 router.post("/inbox/:id/reply", replyToMarketingMessage);
 
 router.get("/suppressions", listMarketingSuppressions);
+router.get("/activity", listMarketingActivities);
 
 export default router;
