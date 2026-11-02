@@ -9,7 +9,7 @@ const marketingContactSchema = new mongoose.Schema(
     phone: { type: String, trim: true, default: "" },
     status: {
       type: String,
-      enum: ["new", "contacted", "replied", "demo_booked", "not_interested", "unsubscribed", "bounced"],
+      enum: ["new", "contacted", "replied", "demo_booked", "not_interested", "unsubscribed", "bounced", "complained", "suppressed"],
       default: "new",
       index: true,
     },
