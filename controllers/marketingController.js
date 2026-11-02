@@ -806,6 +806,14 @@ export const cancelScheduledMarketingCampaignBatch = async (req, res) => {
     }
 
     const counts = await refreshCampaignCounts(campaign._id);
+    const latestScheduledRecipient = await MarketingCampaignRecipient.findOne({
+      campaign: campaign._id,
+      status: "scheduled",
+    }).sort({ scheduledAt: -1 }).select("scheduledAt").lean();
+    await MarketingCampaign.updateOne(
+      { _id: campaign._id },
+      { $set: { scheduledAt: latestScheduledRecipient?.scheduledAt || null } }
+    );
     await recordMarketingActivity(req, {
       action: "campaign.scheduled_batch_cancelled",
       description: `Cancelled ${results.filter((item) => item.cancelled).length} scheduled emails for "${campaign.name}".`,
