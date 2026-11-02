@@ -93,11 +93,12 @@ const getHeader = (headers = {}, name) => {
 };
 
 const refreshCampaignCounts = async (campaignId) => {
-  const [sent, delivered, bounced, failed, queued, replies] = await Promise.all([
+  const [sent, scheduled, delivered, bounced, failed, queued, replies] = await Promise.all([
     MarketingCampaignRecipient.countDocuments({
       campaign: campaignId,
       status: { $in: ["sent", "delivered", "bounced", "complained"] },
     }),
+    MarketingCampaignRecipient.countDocuments({ campaign: campaignId, status: "scheduled" }),
     MarketingCampaignRecipient.countDocuments({ campaign: campaignId, status: "delivered" }),
     MarketingCampaignRecipient.countDocuments({
       campaign: campaignId,
@@ -109,20 +110,21 @@ const refreshCampaignCounts = async (campaignId) => {
   ]);
 
   const status = queued > 0
-    ? (sent > 0 ? "partial" : "draft")
-    : (failed > 0 ? "partial" : "sent");
+    ? (sent > 0 || scheduled > 0 ? "partial" : "draft")
+    : (scheduled > 0 ? "scheduled" : failed > 0 ? "partial" : "sent");
 
   await MarketingCampaign.findByIdAndUpdate(campaignId, {
     sentCount: sent,
+    scheduledCount: scheduled,
     deliveredCount: delivered,
     bouncedCount: bounced,
     failedCount: failed,
     replyCount: replies,
     status,
-    completedAt: queued === 0 ? new Date() : null,
+    completedAt: queued === 0 && scheduled === 0 ? new Date() : null,
   });
 
-  return { sent, delivered, bounced, failed, queued, replies, status };
+  return { sent, scheduled, delivered, bounced, failed, queued, replies, status };
 };
 
 export const getMarketingOverview = async (req, res) => {
@@ -614,6 +616,143 @@ export const sendMarketingCampaignBatch = async (req, res) => {
   }
 };
 
+export const scheduleMarketingCampaignBatch = async (req, res) => {
+  try {
+    if (req.body.confirmSchedule !== true) {
+      return res.status(400).json({ success: false, message: "Confirm the campaign schedule before continuing." });
+    }
+
+    const scheduledAt = new Date(req.body.scheduledAt);
+    const now = Date.now();
+    if (!req.body.scheduledAt || Number.isNaN(scheduledAt.getTime())) {
+      return res.status(400).json({ success: false, message: "Choose a valid scheduled date and time." });
+    }
+    if (scheduledAt.getTime() < now + 5 * 60 * 1000) {
+      return res.status(400).json({ success: false, message: "Schedule the email at least five minutes in the future." });
+    }
+    if (scheduledAt.getTime() > now + 72 * 60 * 60 * 1000) {
+      return res.status(400).json({ success: false, message: "Resend supports scheduled emails up to 72 hours ahead." });
+    }
+
+    const campaign = await MarketingCampaign.findOneAndUpdate(
+      { _id: req.params.id, status: { $nin: ["sent", "sending"] } },
+      { $set: { status: "sending", scheduledAt } },
+      { new: true }
+    );
+    if (!campaign) {
+      const existing = await MarketingCampaign.findById(req.params.id).select("status").lean();
+      if (!existing) return res.status(404).json({ success: false, message: "Campaign not found." });
+      return res.status(409).json({ success: false, message: "This campaign is already being sent or has been completed." });
+    }
+
+    const batch = await MarketingCampaignRecipient.find({
+      campaign: campaign._id,
+      status: { $in: ["queued", "failed"] },
+    })
+      .sort({ createdAt: 1 })
+      .limit(10)
+      .populate("contact", "schoolName email status archivedAt")
+      .lean();
+
+    if (!batch.length) {
+      const counts = await refreshCampaignCounts(campaign._id);
+      return res.json({ success: true, message: "There are no remaining recipients to schedule.", counts });
+    }
+
+    const emails = batch.map((recipient) => recipient.email);
+    const suppressions = new Set(
+      (await MarketingSuppression.find({ email: { $in: emails } }).select("email").lean()).map((item) => item.email)
+    );
+    const eligible = batch.filter((recipient) =>
+      recipient.contact &&
+      !recipient.contact.archivedAt &&
+      !suppressions.has(recipient.email) &&
+      !["unsubscribed", "not_interested", "bounced"].includes(recipient.contact.status)
+    );
+    const blocked = batch.filter((recipient) =>
+      !eligible.some((item) => String(item._id) === String(recipient._id))
+    );
+
+    if (blocked.length) {
+      await MarketingCampaignRecipient.updateMany(
+        { _id: { $in: blocked.map((item) => item._id) } },
+        { $set: { status: "failed", error: "Recipient is suppressed or no longer eligible." } }
+      );
+    }
+
+    const from = process.env.MARKETING_FROM_EMAIL || "SchoolPilot <hello@school-pilot.app>";
+    const replyTo = process.env.MARKETING_REPLY_TO_EMAIL || "hello@school-pilot.app";
+    const results = [];
+
+    for (const recipient of eligible) {
+      const contact = recipient.contact;
+      const personalizedHtml = personalizeCampaignHtml(campaign.html, contact);
+      const unsubscribeUrl = personalizedHtml.match(/href="([^"]+)"[^>]*>Unsubscribe/i)?.[1] || "";
+      try {
+        const result = await resendRequest("/emails", {
+          method: "POST",
+          headers: { "Idempotency-Key": `schoolpilot-scheduled-${campaign._id}-${recipient._id}` },
+          body: JSON.stringify({
+            from,
+            to: [recipient.email],
+            subject: campaign.subject.replace(/{{\s*schoolName\s*}}/gi, contact.schoolName || "there"),
+            html: personalizedHtml,
+            text: `${campaign.text || htmlToText(campaign.html)}\n\nUnsubscribe: ${unsubscribeUrl}`,
+            reply_to: replyTo,
+            scheduled_at: scheduledAt.toISOString(),
+            headers: unsubscribeUrl
+              ? { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
+              : undefined,
+          }),
+        });
+
+        await MarketingCampaignRecipient.updateOne(
+          { _id: recipient._id },
+          {
+            $set: {
+              status: "scheduled",
+              resendEmailId: result.id || "",
+              scheduledAt,
+              error: result.id ? "" : "Resend did not return an email ID.",
+            },
+          }
+        );
+        results.push({ email: recipient.email, scheduled: Boolean(result.id) });
+      } catch (error) {
+        await MarketingCampaignRecipient.updateOne(
+          { _id: recipient._id },
+          { $set: { status: "failed", error: error.message || "Scheduling failed." } }
+        );
+        results.push({ email: recipient.email, scheduled: false });
+      }
+
+      // Resend's single-email endpoint is rate limited; keep scheduled sends paced.
+      await new Promise((resolve) => setTimeout(resolve, 550));
+    }
+
+    const counts = await refreshCampaignCounts(campaign._id);
+    await recordMarketingActivity(req, {
+      action: "campaign.batch_scheduled",
+      description: `Scheduled ${results.filter((item) => item.scheduled).length} emails for "${campaign.name}".`,
+      campaign: campaign._id,
+      metadata: { scheduledAt, results },
+    });
+
+    return res.json({
+      success: true,
+      message: `Scheduled ${results.filter((item) => item.scheduled).length} emails. Each scheduling action handles up to 10 recipients.`,
+      counts,
+      batchSize: batch.length,
+    });
+  } catch (error) {
+    await MarketingCampaign.updateOne(
+      { _id: req.params.id, status: "sending" },
+      { $set: { status: "partial" } }
+    ).catch(() => {});
+    return sendError(res, error, "Failed to schedule campaign batch.");
+  }
+};
+
 export const listMarketingInbox = async (req, res) => {
   try {
     const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
@@ -836,16 +975,31 @@ export const handleResendMarketingWebhook = async (req, res) => {
       if (recentRecipient?.campaign?._id) await refreshCampaignCounts(recentRecipient.campaign._id);
     }
 
-    if (["email.delivered", "email.bounced", "email.complained"].includes(event.type) && data.email_id) {
+    if (["email.sent", "email.delivered", "email.bounced", "email.complained"].includes(event.type) && data.email_id) {
       const recipient = await MarketingCampaignRecipient.findOne({ resendEmailId: data.email_id });
       if (recipient) {
-        const nextStatus = event.type === "email.delivered"
-          ? "delivered"
-          : event.type === "email.complained" ? "complained" : "bounced";
+        const nextStatus = event.type === "email.sent"
+          ? "sent"
+          : event.type === "email.delivered"
+            ? "delivered"
+            : event.type === "email.complained" ? "complained" : "bounced";
         await MarketingCampaignRecipient.updateOne(
           { _id: recipient._id },
-          { $set: { status: nextStatus } }
+          {
+            $set: {
+              status: nextStatus,
+              ...(nextStatus === "sent" ? { sentAt: new Date() } : {}),
+              ...(nextStatus === "delivered" ? { deliveredAt: new Date() } : {}),
+            },
+          }
         );
+
+        if (nextStatus === "sent") {
+          await MarketingContact.updateOne(
+            { email: recipient.email, status: "new" },
+            { $set: { status: "contacted", lastContactedAt: new Date() } }
+          );
+        }
 
         if (nextStatus === "bounced" || nextStatus === "complained") {
           await MarketingSuppression.updateOne(
