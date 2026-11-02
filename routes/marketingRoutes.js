@@ -6,6 +6,7 @@ import {
   listMarketingContacts,
   createMarketingContact,
   updateMarketingContact,
+  archiveMarketingContact,
   importMarketingContacts,
   listMarketingCampaigns,
   createMarketingCampaign,
@@ -36,6 +37,7 @@ const upload = multer({
 // Public provider callbacks and unsubscribe links.
 router.post("/webhooks/resend", handleResendMarketingWebhook);
 router.get("/unsubscribe/:token", unsubscribeMarketingEmail);
+router.post("/unsubscribe/:token", express.urlencoded({ extended: false }), unsubscribeMarketingEmail);
 
 // All dashboard operations are restricted to platform super administrators.
 router.use(protect, authorize("superAdmin"));
@@ -48,6 +50,7 @@ router.route("/contacts")
 
 router.post("/contacts/import", upload.single("file"), importMarketingContacts);
 router.patch("/contacts/:id", updateMarketingContact);
+router.delete("/contacts/:id", archiveMarketingContact);
 
 router.route("/campaigns")
   .get(listMarketingCampaigns)
