@@ -93,7 +93,7 @@ const getHeader = (headers = {}, name) => {
 };
 
 const refreshCampaignCounts = async (campaignId) => {
-  const [sent, scheduled, delivered, bounced, failed, queued, replies] = await Promise.all([
+  const [sent, scheduled, delivered, bounced, failed, suppressed, queued, replies] = await Promise.all([
     MarketingCampaignRecipient.countDocuments({
       campaign: campaignId,
       status: { $in: ["sent", "delivered", "bounced", "complained"] },
@@ -105,17 +105,20 @@ const refreshCampaignCounts = async (campaignId) => {
       status: { $in: ["bounced", "complained"] },
     }),
     MarketingCampaignRecipient.countDocuments({ campaign: campaignId, status: "failed" }),
+    MarketingCampaignRecipient.countDocuments({ campaign: campaignId, status: "suppressed" }),
     MarketingCampaignRecipient.countDocuments({ campaign: campaignId, status: "queued" }),
     MarketingMessage.countDocuments({ campaign: campaignId, direction: "inbound" }),
   ]);
 
   const status = queued > 0
     ? (sent > 0 || scheduled > 0 ? "partial" : "draft")
-    : (failed > 0 ? "partial" : scheduled > 0 ? "scheduled" : "sent");
+    : (failed > 0 ? "partial" : scheduled > 0 ? "scheduled" : sent > 0 ? "sent" : suppressed > 0 ? "failed" : "sent");
 
   await MarketingCampaign.findByIdAndUpdate(campaignId, {
     sentCount: sent,
     scheduledCount: scheduled,
+    queuedCount: queued,
+    suppressedCount: suppressed,
     deliveredCount: delivered,
     bouncedCount: bounced,
     failedCount: failed,
@@ -124,7 +127,7 @@ const refreshCampaignCounts = async (campaignId) => {
     completedAt: queued === 0 && scheduled === 0 ? new Date() : null,
   });
 
-  return { sent, scheduled, delivered, bounced, failed, queued, replies, status };
+  return { sent, scheduled, delivered, bounced, failed, suppressed, queued, replies, status };
 };
 
 export const getMarketingOverview = async (req, res) => {
@@ -527,7 +530,7 @@ export const sendMarketingCampaignBatch = async (req, res) => {
     if (blocked.length) {
       await MarketingCampaignRecipient.updateMany(
         { _id: { $in: blocked.map((item) => item._id) } },
-        { $set: { status: "failed", error: "Recipient is suppressed or no longer eligible." } }
+        { $set: { status: "suppressed", error: "Recipient is suppressed or no longer eligible." } }
       );
     }
 
