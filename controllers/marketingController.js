@@ -1006,6 +1006,11 @@ export const handleResendMarketingWebhook = async (req, res) => {
 
     const event = JSON.parse(rawBody);
     const eventId = String(req.headers["svix-id"] || "");
+
+    if (eventId && await MarketingWebhookEvent.exists({ eventId })) {
+      return res.status(200).json({ received: true, duplicate: true });
+    }
+
     const data = event.data || {};
 
     if (event.type === "email.received" && data.email_id) {
