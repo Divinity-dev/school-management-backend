@@ -629,8 +629,8 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
     if (scheduledAt.getTime() < now + 5 * 60 * 1000) {
       return res.status(400).json({ success: false, message: "Schedule the email at least five minutes in the future." });
     }
-    if (scheduledAt.getTime() > now + 72 * 60 * 60 * 1000) {
-      return res.status(400).json({ success: false, message: "Resend supports scheduled emails up to 72 hours ahead." });
+    if (scheduledAt.getTime() > now + 30 * 24 * 60 * 60 * 1000) {
+      return res.status(400).json({ success: false, message: "Resend supports scheduled emails up to 30 days ahead." });
     }
 
     const campaign = await MarketingCampaign.findOneAndUpdate(
