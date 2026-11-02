@@ -802,6 +802,7 @@ export const cancelScheduledMarketingCampaignBatch = async (req, res) => {
         );
         results.push({ email: recipient.email, cancelled: false });
       }
+      await new Promise((resolve) => setTimeout(resolve, 550));
     }
 
     const counts = await refreshCampaignCounts(campaign._id);
