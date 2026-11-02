@@ -15,6 +15,8 @@ const marketingCampaignSchema = new mongoose.Schema(
     recipientCount: { type: Number, default: 0 },
     sentCount: { type: Number, default: 0 },
     scheduledCount: { type: Number, default: 0 },
+    queuedCount: { type: Number, default: 0 },
+    suppressedCount: { type: Number, default: 0 },
     scheduledAt: { type: Date, default: null },
     deliveredCount: { type: Number, default: 0 },
     bouncedCount: { type: Number, default: 0 },
