@@ -1057,8 +1057,14 @@ export const handleResendMarketingWebhook = async (req, res) => {
           : event.type === "email.delivered"
             ? "delivered"
             : event.type === "email.complained" ? "complained" : "bounced";
-        await MarketingCampaignRecipient.updateOne(
-          { _id: recipient._id },
+        const allowedCurrentStatuses = nextStatus === "sent"
+          ? ["scheduled"]
+          : nextStatus === "delivered"
+            ? ["sent", "scheduled"]
+            : ["sent", "scheduled", "delivered"];
+
+        const recipientUpdate = await MarketingCampaignRecipient.updateOne(
+          { _id: recipient._id, status: { $in: allowedCurrentStatuses } },
           {
             $set: {
               status: nextStatus,
@@ -1068,7 +1074,7 @@ export const handleResendMarketingWebhook = async (req, res) => {
           }
         );
 
-        if (nextStatus === "sent") {
+        if (nextStatus === "sent" && recipientUpdate.modifiedCount > 0) {
           await MarketingContact.updateOne(
             { email: recipient.email, status: "new" },
             { $set: { status: "contacted", lastContactedAt: new Date() } }
