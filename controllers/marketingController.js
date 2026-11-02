@@ -710,7 +710,7 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
           {
             $set: {
               status: "scheduled",
-              resendEmailId: result.id || "",
+              resendEmailId: result.id || undefined,
               scheduledAt,
               error: result.id ? "" : "Resend did not return an email ID.",
             },
