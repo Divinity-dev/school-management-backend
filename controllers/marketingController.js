@@ -545,9 +545,9 @@ export const sendMarketingCampaignBatch = async (req, res) => {
       return {
         from,
         to: [recipient.email],
-        subject: campaign.subject.replace(/{{\s*schoolName\s*}}/gi, contact.schoolName || "there"),
+        subject: campaign.subject.replace(/{{\s*schoolName\s*}}/gi, () => contact.schoolName || "there"),
         html: personalizedHtml,
-        text: `${campaign.text || htmlToText(campaign.html)}\n\nUnsubscribe: ${unsubscribeUrl}`,
+        text: `${(campaign.text || htmlToText(campaign.html)).replace(/{{\s*schoolName\s*}}/gi, () => contact.schoolName || "there").replace(/{{\s*email\s*}}/gi, () => contact.email || "")}\n\nUnsubscribe: ${unsubscribeUrl}`,
         reply_to: replyTo,
         headers: unsubscribeUrl
           ? { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
@@ -695,9 +695,9 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
           body: JSON.stringify({
             from,
             to: [recipient.email],
-            subject: campaign.subject.replace(/{{\s*schoolName\s*}}/gi, contact.schoolName || "there"),
+            subject: campaign.subject.replace(/{{\s*schoolName\s*}}/gi, () => contact.schoolName || "there"),
             html: personalizedHtml,
-            text: `${campaign.text || htmlToText(campaign.html)}\n\nUnsubscribe: ${unsubscribeUrl}`,
+            text: `${(campaign.text || htmlToText(campaign.html)).replace(/{{\s*schoolName\s*}}/gi, () => contact.schoolName || "there").replace(/{{\s*email\s*}}/gi, () => contact.email || "")}\n\nUnsubscribe: ${unsubscribeUrl}`,
             reply_to: replyTo,
             scheduled_at: scheduledAt.toISOString(),
             headers: unsubscribeUrl
