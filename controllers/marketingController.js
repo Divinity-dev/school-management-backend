@@ -753,6 +753,75 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
   }
 };
 
+export const cancelScheduledMarketingCampaignBatch = async (req, res) => {
+  try {
+    if (req.body.confirmCancel !== true) {
+      return res.status(400).json({ success: false, message: "Confirm cancellation before continuing." });
+    }
+
+    const campaign = await MarketingCampaign.findOneAndUpdate(
+      { _id: req.params.id, status: { $nin: ["sent", "sending"] } },
+      { $set: { status: "sending" } },
+      { new: true }
+    );
+    if (!campaign) {
+      const existing = await MarketingCampaign.findById(req.params.id).select("status").lean();
+      if (!existing) return res.status(404).json({ success: false, message: "Campaign not found." });
+      return res.status(409).json({ success: false, message: "This campaign cannot be changed while it is being processed or after completion." });
+    }
+
+    const scheduled = await MarketingCampaignRecipient.find({
+      campaign: campaign._id,
+      status: "scheduled",
+    })
+      .sort({ scheduledAt: 1 })
+      .limit(10)
+      .lean();
+
+    const results = [];
+    for (const recipient of scheduled) {
+      try {
+        if (!recipient.resendEmailId) throw new Error("Scheduled email ID is missing.");
+        await resendRequest(`/emails/${encodeURIComponent(recipient.resendEmailId)}/cancel`, { method: "POST" });
+        await MarketingCampaignRecipient.updateOne(
+          { _id: recipient._id, status: "scheduled" },
+          {
+            $set: { status: "queued", scheduledAt: null, error: "" },
+            $unset: { resendEmailId: 1 },
+          }
+        );
+        results.push({ email: recipient.email, cancelled: true });
+      } catch (error) {
+        await MarketingCampaignRecipient.updateOne(
+          { _id: recipient._id },
+          { $set: { error: error.message || "Could not cancel scheduled email." } }
+        );
+        results.push({ email: recipient.email, cancelled: false });
+      }
+    }
+
+    const counts = await refreshCampaignCounts(campaign._id);
+    await recordMarketingActivity(req, {
+      action: "campaign.scheduled_batch_cancelled",
+      description: `Cancelled ${results.filter((item) => item.cancelled).length} scheduled emails for "${campaign.name}".`,
+      campaign: campaign._id,
+      metadata: { results },
+    });
+
+    return res.json({
+      success: true,
+      message: `Cancelled ${results.filter((item) => item.cancelled).length} scheduled emails. Up to 10 are handled per action.`,
+      counts,
+    });
+  } catch (error) {
+    await MarketingCampaign.updateOne(
+      { _id: req.params.id, status: "sending" },
+      { $set: { status: "partial" } }
+    ).catch(() => {});
+    return sendError(res, error, "Failed to cancel scheduled emails.");
+  }
+};
+
 export const listMarketingInbox = async (req, res) => {
   try {
     const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
