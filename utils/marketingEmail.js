@@ -82,14 +82,24 @@ export const htmlToText = (html = "") =>
     .trim();
 
 export const resendRequest = async (path, options = {}) => {
-  if (!process.env.RESEND_API_KEY) {
-    throw new Error("Resend is not configured. Add RESEND_API_KEY to the backend environment.");
+  // Receiving endpoints require a Full access key. All send operations use
+  // the restricted Sending key so the two permissions remain separated.
+  const isReceivingRequest = path.startsWith("/emails/receiving/");
+  const apiKey = isReceivingRequest
+    ? process.env.RESEND_RECEIVING_API_KEY
+    : process.env.RESEND_SENDING_API_KEY;
+
+  if (!apiKey) {
+    const variableName = isReceivingRequest
+      ? "RESEND_RECEIVING_API_KEY"
+      : "RESEND_SENDING_API_KEY";
+    throw new Error(`Resend is not configured. Add ${variableName} to the backend environment.`);
   }
 
   const response = await fetch(`https://api.resend.com${path}`, {
     ...options,
     headers: {
-      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
       ...(options.headers || {}),
     },
