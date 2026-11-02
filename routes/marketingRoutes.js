@@ -12,6 +12,7 @@ import {
   createMarketingCampaign,
   getMarketingCampaign,
   sendMarketingCampaignBatch,
+  scheduleMarketingCampaignBatch,
   listMarketingInbox,
   getMarketingInboxMessage,
   replyToMarketingMessage,
@@ -59,6 +60,7 @@ router.route("/campaigns")
 
 router.get("/campaigns/:id", getMarketingCampaign);
 router.post("/campaigns/:id/send", sendMarketingCampaignBatch);
+router.post("/campaigns/:id/schedule", scheduleMarketingCampaignBatch);
 
 router.get("/inbox", listMarketingInbox);
 router.get("/inbox/:id", getMarketingInboxMessage);
