@@ -8,7 +8,7 @@ const marketingCampaignRecipientSchema = new mongoose.Schema(
     schoolName: { type: String, default: "" },
     status: {
       type: String,
-      enum: ["queued", "scheduled", "sent", "delivered", "bounced", "complained", "failed"],
+      enum: ["queued", "scheduled", "sent", "delivered", "bounced", "complained", "failed", "suppressed"],
       default: "queued",
       index: true,
     },
