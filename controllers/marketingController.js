@@ -111,7 +111,7 @@ const refreshCampaignCounts = async (campaignId) => {
 
   const status = queued > 0
     ? (sent > 0 || scheduled > 0 ? "partial" : "draft")
-    : (scheduled > 0 ? "scheduled" : failed > 0 ? "partial" : "sent");
+    : (failed > 0 ? "partial" : scheduled > 0 ? "scheduled" : "sent");
 
   await MarketingCampaign.findByIdAndUpdate(campaignId, {
     sentCount: sent,
