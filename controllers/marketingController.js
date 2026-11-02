@@ -118,7 +118,12 @@ export const listMarketingContacts = async (req, res) => {
     if (req.query.status) filter.status = req.query.status;
     if (req.query.category) filter.category = req.query.category;
     if (req.query.q) {
-      const q = String(req.query.q).trim();
+      const q = String(req.query.q).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\const q = String(req.query.q).trim();
+      filter.$or = [
+        { schoolName: { $regex: q, $options: "i" } },
+        { email: { $regex: q, $options: "i" } },
+        { location: { $regex: q, $options: "i" } },
+      ];");
       filter.$or = [
         { schoolName: { $regex: q, $options: "i" } },
         { email: { $regex: q, $options: "i" } },
@@ -172,6 +177,20 @@ export const createMarketingContact = async (req, res) => {
       return res.status(409).json({ success: false, message: "A contact with this email address already exists." });
     }
     return sendError(res, error, "Failed to add contact.");
+  }
+};
+
+export const archiveMarketingContact = async (req, res) => {
+  try {
+    const contact = await MarketingContact.findOneAndUpdate(
+      { _id: req.params.id, archivedAt: null },
+      { $set: { archivedAt: new Date() } },
+      { new: true }
+    );
+    if (!contact) return res.status(404).json({ success: false, message: "Contact not found." });
+    return res.json({ success: true, message: "Contact archived successfully." });
+  } catch (error) {
+    return sendError(res, error, "Failed to archive contact.");
   }
 };
 
@@ -389,15 +408,20 @@ export const sendMarketingCampaignBatch = async (req, res) => {
       return res.status(400).json({ success: false, message: "Confirm the campaign send before continuing." });
     }
 
-    const campaign = await MarketingCampaign.findById(req.params.id);
-    if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found." });
-    if (["sent", "sending"].includes(campaign.status)) {
+    const campaign = await MarketingCampaign.findOneAndUpdate(
+      { _id: req.params.id, status: { $nin: ["sent", "sending"] } },
+      { $set: { status: "sending", startedAt: new Date() } },
+      { new: true }
+    );
+    if (!campaign) {
+      const existing = await MarketingCampaign.findById(req.params.id).select("status").lean();
+      if (!existing) return res.status(404).json({ success: false, message: "Campaign not found." });
       return res.status(409).json({ success: false, message: "This campaign is already being sent or has been completed." });
     }
 
     const queued = await MarketingCampaignRecipient.find({
       campaign: campaign._id,
-      status: "queued",
+      status: { $in: ["queued", "failed"] },
     })
       .sort({ createdAt: 1 })
       .limit(50)
@@ -432,10 +456,6 @@ export const sendMarketingCampaignBatch = async (req, res) => {
       const counts = await refreshCampaignCounts(campaign._id);
       return res.json({ success: true, message: "No eligible recipients in this batch.", counts });
     }
-
-    campaign.status = "sending";
-    if (!campaign.startedAt) campaign.startedAt = new Date();
-    await campaign.save();
 
     const from = process.env.MARKETING_FROM_EMAIL || "SchoolPilot <hello@school-pilot.app>";
     const replyTo = process.env.MARKETING_REPLY_TO_EMAIL || "hello@school-pilot.app";
@@ -654,15 +674,6 @@ export const handleResendMarketingWebhook = async (req, res) => {
     });
 
     const eventId = String(req.headers["svix-id"] || "");
-    if (eventId) {
-      try {
-        await MarketingWebhookEvent.create({ eventId, eventType: event.type });
-      } catch (error) {
-        if (error.code === 11000) return res.status(200).json({ received: true, duplicate: true });
-        throw error;
-      }
-    }
-
     const data = event.data || {};
 
     if (event.type === "email.received" && data.email_id) {
@@ -738,6 +749,16 @@ export const handleResendMarketingWebhook = async (req, res) => {
           );
         }
         await refreshCampaignCounts(recipient.campaign);
+      }
+    }
+
+    // Persist only after successful processing so a transient failure can be retried by Resend.
+    if (eventId) {
+      try {
+        await MarketingWebhookEvent.create({ eventId, eventType: event.type });
+      } catch (persistError) {
+        if (persistError.code === 11000) return res.status(200).json({ received: true, duplicate: true });
+        throw persistError;
       }
     }
 
