@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import mongoose from "mongoose";
 import XLSX from "xlsx";
 
 import MarketingContact from "../models/MarketingContact.js";
@@ -476,6 +477,96 @@ export const getMarketingCampaign = async (req, res) => {
     return res.json({ success: true, campaign, recipients });
   } catch (error) {
     return sendError(res, error, "Failed to load campaign.");
+  }
+};
+
+export const updateMarketingCampaign = async (req, res) => {
+  try {
+    const campaign = await MarketingCampaign.findById(req.params.id);
+    if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found." });
+
+    const existingRecipients = await MarketingCampaignRecipient.find({ campaign: campaign._id })
+      .select("status")
+      .lean();
+    const canEdit = campaign.status === "draft" &&
+      Number(campaign.sentCount || 0) === 0 &&
+      Number(campaign.scheduledCount || 0) === 0 &&
+      existingRecipients.every((recipient) => recipient.status === "queued");
+
+    if (!canEdit) {
+      return res.status(409).json({
+        success: false,
+        message: "Only campaigns that have not started sending or scheduling can be edited.",
+      });
+    }
+
+    const name = String(req.body.name ?? campaign.name).trim();
+    const subject = String(req.body.subject ?? campaign.subject).trim();
+    const html = String(req.body.html ?? campaign.html).trim();
+    const contactIds = Array.isArray(req.body.contactIds)
+      ? [...new Set(req.body.contactIds.map(String))]
+      : null;
+
+    if (!name || !subject || !html) {
+      return res.status(400).json({
+        success: false,
+        message: "Campaign name, subject and email content are required.",
+      });
+    }
+
+    let eligible = null;
+    if (contactIds) {
+      if (!contactIds.length || contactIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
+        return res.status(400).json({ success: false, message: "Select at least one valid contact." });
+      }
+
+      const contacts = await MarketingContact.find({
+        _id: { $in: contactIds },
+        archivedAt: null,
+        status: { $nin: ["unsubscribed", "not_interested", "bounced", "complained", "suppressed"] },
+      }).lean();
+
+      const suppressed = new Set(
+        (await MarketingSuppression.find({ email: { $in: contacts.map((item) => item.email) } })
+          .select("email")
+          .lean()).map((item) => item.email)
+      );
+      eligible = contacts.filter((contact) => !suppressed.has(contact.email));
+
+      if (!eligible.length) {
+        return res.status(400).json({ success: false, message: "No eligible contacts remain selected." });
+      }
+    }
+
+    campaign.name = name;
+    campaign.subject = subject;
+    campaign.html = html;
+    campaign.text = String(req.body.text || htmlToText(html));
+    if (eligible) {
+      await MarketingCampaignRecipient.deleteMany({ campaign: campaign._id });
+      await MarketingCampaignRecipient.insertMany(
+        eligible.map((contact) => ({
+          campaign: campaign._id,
+          contact: contact._id,
+          email: contact.email,
+          schoolName: contact.schoolName,
+        }))
+      );
+      campaign.recipientCount = eligible.length;
+      campaign.queuedCount = eligible.length;
+    }
+    await campaign.save();
+
+    await recordMarketingActivity(req, {
+      action: "campaign.updated",
+      description: `Updated draft campaign "${campaign.name}".`,
+      campaign: campaign._id,
+      metadata: { recipientCount: campaign.recipientCount },
+    });
+
+    return res.json({ success: true, message: "Campaign draft updated successfully.", campaign });
+  } catch (error) {
+    return sendError(res, error, "Failed to update campaign draft.");
   }
 };
 
