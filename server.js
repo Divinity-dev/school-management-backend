@@ -31,6 +31,7 @@ import publicSchoolRoutes from "./routes/publicSchoolRoutes.js";
 import schoolPostRoutes from "./routes/schoolPostRoutes.js";
 import superAdminRoutes from "./routes/superAdminRoutes.js";
 import classTeacherRemarkRoutes from "./routes/classTeacherRemarkRoutes.js";
+import marketingRoutes from "./routes/marketingRoutes.js";
 
 const app = express();
 
@@ -121,6 +122,9 @@ app.use(
   express.raw({ type: "application/json" })
 );
 
+// Resend webhooks require the exact raw request body for Svix signature verification.
+app.use("/api/marketing/webhooks/resend", express.raw({ type: "application/json" }));
+
 // Parse JSON for other requests.
 app.use(express.json());
 
@@ -170,6 +174,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/public", publicSchoolRoutes);
 app.use("/api/public", schoolPostRoutes);
 app.use("/api/super-admin", superAdminRoutes);
+app.use("/api/marketing", marketingRoutes);
 app.use("/api/class-teacher-remarks", classTeacherRemarkRoutes);
 
 // Export the app for Vercel.
