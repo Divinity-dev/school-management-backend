@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import mongoose from "mongoose";
 import XLSX from "xlsx";
 
 import MarketingContact from "../models/MarketingContact.js";
