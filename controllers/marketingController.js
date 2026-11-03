@@ -913,7 +913,7 @@ export const replyToMarketingMessage = async (req, res) => {
 
     const outboundMessage = await MarketingMessage.create({
       direction: "outbound",
-      resendEmailId: result.id || "",
+      resendEmailId: result.id || undefined,
       contact: message.contact,
       campaign: message.campaign,
       from: process.env.MARKETING_FROM_EMAIL || "hello@school-pilot.app",
