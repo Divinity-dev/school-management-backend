@@ -11,6 +11,7 @@ import {
   listMarketingCampaigns,
   createMarketingCampaign,
   getMarketingCampaign,
+  updateMarketingCampaign,
   sendMarketingCampaignBatch,
   scheduleMarketingCampaignBatch,
   cancelScheduledMarketingCampaignBatch,
@@ -60,6 +61,7 @@ router.route("/campaigns")
   .post(createMarketingCampaign);
 
 router.get("/campaigns/:id", getMarketingCampaign);
+router.patch("/campaigns/:id", updateMarketingCampaign);
 router.post("/campaigns/:id/send", sendMarketingCampaignBatch);
 router.post("/campaigns/:id/schedule", scheduleMarketingCampaignBatch);
 router.post("/campaigns/:id/cancel-scheduled", cancelScheduledMarketingCampaignBatch);
