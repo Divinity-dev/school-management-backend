@@ -218,7 +218,15 @@ export const createMarketingContact = async (req, res) => {
       phone: req.body.phone || "",
       notes: req.body.notes || "",
       source: "manual",
-      status: suppression ? "unsubscribed" : "new",
+      status: suppression
+        ? suppression.reason === "unsubscribed" ? "unsubscribed"
+          : suppression.reason === "bounced" ? "bounced"
+            : suppression.reason === "complaint" ? "complained" : "suppressed"
+        : "new",
+      deliveryStatus: suppression
+        ? suppression.reason === "bounced" ? "bounced"
+          : suppression.reason === "complaint" ? "complained" : "suppressed"
+        : "unverified",
     });
 
     await recordMarketingActivity(req, {
@@ -256,37 +264,76 @@ export const archiveMarketingContact = async (req, res) => {
 
 export const updateMarketingContact = async (req, res) => {
   try {
+    const existing = await MarketingContact.findOne({ _id: req.params.id, archivedAt: null });
+    if (!existing) return res.status(404).json({ success: false, message: "Contact not found." });
+
     const allowed = ["schoolName", "category", "location", "phone", "status", "notes", "nextFollowUpAt"];
     const updates = {};
     allowed.forEach((field) => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     });
 
-    if (updates.status === "unsubscribed") {
-      const contact = await MarketingContact.findById(req.params.id);
-      if (!contact) return res.status(404).json({ success: false, message: "Contact not found." });
+    const oldEmail = existing.email;
+    const nextEmail = req.body.email !== undefined ? normalizeEmail(req.body.email) : oldEmail;
+    const emailChanged = nextEmail !== oldEmail;
+
+    if (req.body.email !== undefined && !EMAIL_PATTERN.test(nextEmail)) {
+      return res.status(400).json({ success: false, message: "Enter a valid replacement email address." });
+    }
+
+    const updateQuery = { $set: updates };
+    if (emailChanged) {
+      const suppression = await MarketingSuppression.findOne({ email: nextEmail }).lean();
+      const suppressedStatus = suppression
+        ? suppression.reason === "unsubscribed" ? "unsubscribed"
+          : suppression.reason === "bounced" ? "bounced"
+            : suppression.reason === "complaint" ? "complained" : "suppressed"
+        : "new";
+
+      updateQuery.$set = {
+        ...updates,
+        email: nextEmail,
+        status: suppressedStatus,
+        deliveryStatus: suppression ? suppressedStatus === "unsubscribed" ? "suppressed" : suppressedStatus : "unverified",
+        lastBounceReason: "",
+        lastDeliveryAt: null,
+      };
+      updateQuery.$push = {
+        emailHistory: { email: oldEmail, changedAt: new Date() },
+      };
+    }
+
+    if (updates.status === "unsubscribed" && !emailChanged) {
       await MarketingSuppression.updateOne(
-        { email: contact.email },
-        { $setOnInsert: { email: contact.email, reason: "manual", source: "dashboard" } },
+        { email: oldEmail },
+        { $setOnInsert: { email: oldEmail, reason: "manual", source: "dashboard" } },
         { upsert: true }
       );
     }
 
     const contact = await MarketingContact.findOneAndUpdate(
       { _id: req.params.id, archivedAt: null },
-      { $set: updates },
+      updateQuery,
       { new: true, runValidators: true }
     );
 
     if (!contact) return res.status(404).json({ success: false, message: "Contact not found." });
     await recordMarketingActivity(req, {
-      action: "contact.updated",
-      description: `Updated contact details for ${contact.schoolName}.`,
+      action: emailChanged ? "contact.email_replaced" : "contact.updated",
+      description: emailChanged
+        ? `Replaced the email address for ${contact.schoolName}; previous campaign history was retained.`
+        : `Updated contact details for ${contact.schoolName}.`,
       contact: contact._id,
-      metadata: { status: contact.status },
+      metadata: {
+        status: contact.status,
+        ...(emailChanged ? { oldEmail, newEmail: nextEmail } : {}),
+      },
     });
-    return res.json({ success: true, message: "Contact updated successfully.", contact });
+    return res.json({ success: true, message: emailChanged ? "Email address replaced. Previous campaign history was retained." : "Contact updated successfully.", contact });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({ success: false, message: "A contact with this email address already exists." });
+    }
     return sendError(res, error, "Failed to update contact.");
   }
 };
@@ -1153,7 +1200,19 @@ export const handleResendMarketingWebhook = async (req, res) => {
       data.email_id
     ) {
       const recipient = await MarketingCampaignRecipient.findOne({ resendEmailId: data.email_id });
-      if (recipient) {
+      if (!recipient) {
+        // Resend can emit an event before the batch response has been saved against
+        // its campaign recipient. Ask Resend to retry only when the address belongs
+        // to a known marketing contact; unrelated test emails are safely ignored.
+        const eventTo = Array.isArray(data.to) ? data.to : [data.to];
+        const eventEmails = eventTo.map((value) => extractEmail(value)).filter(Boolean);
+        const knownContact = eventEmails.length
+          ? await MarketingContact.exists({ email: { $in: eventEmails } })
+          : false;
+        if (knownContact) {
+          return res.status(503).json({ success: false, message: "Campaign recipient mapping is not ready. Please retry this webhook." });
+        }
+      } else {
         const nextStatus = event.type === "email.sent"
           ? "sent"
           : event.type === "email.delivered"
@@ -1165,6 +1224,21 @@ export const handleResendMarketingWebhook = async (req, res) => {
                 : event.type === "email.failed"
                   ? "failed"
                   : "suppressed";
+        const bounceReason = data.bounce?.message
+          || data.bounce?.reason
+          || data.reason
+          || data.error?.message
+          || (data.bounce?.type ? [data.bounce.type, data.bounce.subType].filter(Boolean).join(" / ") : "")
+          || "Recipient mail server rejected the message.";
+        const eventError = nextStatus === "bounced"
+          ? bounceReason
+          : nextStatus === "failed"
+            ? data.failed?.message || data.error?.message || "Resend reported a send failure."
+            : nextStatus === "suppressed"
+              ? data.suppressed?.message || "Resend suppressed this recipient."
+              : nextStatus === "complained"
+                ? "Recipient marked this email as spam."
+                : "";
         const allowedCurrentStatuses = nextStatus === "sent"
           ? ["scheduled"]
           : nextStatus === "delivered"
@@ -1178,20 +1252,26 @@ export const handleResendMarketingWebhook = async (req, res) => {
               status: nextStatus,
               ...(nextStatus === "sent" ? { sentAt: new Date() } : {}),
               ...(nextStatus === "delivered" ? { deliveredAt: new Date() } : {}),
-              ...(nextStatus === "failed" ? {
-                error: data.failed?.message || data.error?.message || "Resend reported a send failure.",
-              } : {}),
-              ...(nextStatus === "suppressed" ? {
-                error: data.suppressed?.message || "Resend suppressed this recipient.",
-              } : {}),
+              ...(eventError ? { error: eventError } : {}),
             },
           }
         );
 
         if (nextStatus === "sent") {
           await MarketingContact.updateOne(
+            { email: recipient.email },
+            { $set: { deliveryStatus: "sent", lastContactedAt: new Date() } }
+          );
+          await MarketingContact.updateOne(
             { email: recipient.email, status: "new" },
-            { $set: { status: "contacted", lastContactedAt: new Date() } }
+            { $set: { status: "contacted" } }
+          );
+        }
+
+        if (nextStatus === "delivered") {
+          await MarketingContact.updateOne(
+            { email: recipient.email },
+            { $set: { deliveryStatus: "delivered", lastDeliveryAt: new Date(), lastBounceReason: "" } }
           );
         }
 
@@ -1213,9 +1293,21 @@ export const handleResendMarketingWebhook = async (req, res) => {
           );
           await MarketingContact.updateOne(
             { email: recipient.email },
-            { $set: { status: nextStatus } }
+            {
+              $set: {
+                status: nextStatus,
+                deliveryStatus: nextStatus,
+                ...(nextStatus === "bounced" ? { lastBounceReason: bounceReason } : {}),
+              },
+            }
+          );
+        } else if (nextStatus === "failed") {
+          await MarketingContact.updateOne(
+            { email: recipient.email },
+            { $set: { deliveryStatus: "failed" } }
           );
         }
+
         await refreshCampaignCounts(recipient.campaign);
       }
     }

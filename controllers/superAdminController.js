@@ -1,4 +1,5 @@
 import User from "../models/User.js";
+import Student from "../models/Student.js";
 import School from "../models/School.js";
 import Subscription from "../models/Subscription.js";
 
@@ -25,6 +26,7 @@ export const getDashboardStats = async (req, res) => {
       schoolAdmins,
       teachers,
       students,
+      studentAccounts,
       parents,
       activeSubscriptions,
       expiredSubscriptions,
@@ -49,6 +51,8 @@ export const getDashboardStats = async (req, res) => {
       User.countDocuments({
         role: "teacher",
       }),
+
+      Student.countDocuments(),
 
       User.countDocuments({
         role: "student",
@@ -161,6 +165,15 @@ export const getDashboardStats = async (req, res) => {
     |--------------------------------------------------------------------------
     */
 
+    const studentsBySchool = await Student.aggregate([
+      {
+        $group: {
+          _id: "$school",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
     const revenueBySchool = await Subscription.aggregate([
       {
         $match: {
@@ -227,6 +240,12 @@ export const getDashboardStats = async (req, res) => {
       }
     });
 
+    const schoolStudentStats = {};
+
+    studentsBySchool.forEach((item) => {
+      schoolStudentStats[item._id.toString()] = item.count;
+    });
+
     /*
     |--------------------------------------------------------------------------
     | Convert revenue data into a lookup object
@@ -278,7 +297,9 @@ export const getDashboardStats = async (req, res) => {
 
         teachers: users.teachers,
 
-        students: users.students,
+        students: schoolStudentStats[schoolId] || 0,
+
+        studentAccounts: users.students,
 
         parents: users.parents,
 
@@ -335,6 +356,7 @@ export const getDashboardStats = async (req, res) => {
           schoolAdmins,
           teachers,
           students,
+          studentAccounts,
           parents,
         },
 
