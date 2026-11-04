@@ -218,7 +218,15 @@ export const createMarketingContact = async (req, res) => {
       phone: req.body.phone || "",
       notes: req.body.notes || "",
       source: "manual",
-      status: suppression ? "unsubscribed" : "new",
+      status: suppression
+        ? suppression.reason === "unsubscribed" ? "unsubscribed"
+          : suppression.reason === "bounced" ? "bounced"
+            : suppression.reason === "complaint" ? "complained" : "suppressed"
+        : "new",
+      deliveryStatus: suppression
+        ? suppression.reason === "bounced" ? "bounced"
+          : suppression.reason === "complaint" ? "complained" : "suppressed"
+        : "unverified",
     });
 
     await recordMarketingActivity(req, {
