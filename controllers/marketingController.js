@@ -1259,8 +1259,12 @@ export const handleResendMarketingWebhook = async (req, res) => {
 
         if (nextStatus === "sent") {
           await MarketingContact.updateOne(
+            { email: recipient.email },
+            { $set: { deliveryStatus: "sent", lastContactedAt: new Date() } }
+          );
+          await MarketingContact.updateOne(
             { email: recipient.email, status: "new" },
-            { $set: { status: "contacted", deliveryStatus: "sent", lastContactedAt: new Date() } }
+            { $set: { status: "contacted" } }
           );
         }
 
