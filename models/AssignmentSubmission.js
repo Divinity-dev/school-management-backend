@@ -20,7 +20,28 @@ const assignmentSubmissionSchema = new mongoose.Schema(
       required: true,
     },
 
-    answers: {\n      type: [{\n        questionId: { type: mongoose.Schema.Types.ObjectId, required: true },\n        answer: { type: String, default: "" },\n      }],\n      default: [],\n    },\n\n    autoScore: { type: Number, default: null, min: 0 },\n    manualScore: { type: Number, default: null, min: 0 },\n    maxScore: { type: Number, default: null, min: 0 },\n    isAutoGraded: { type: Boolean, default: false },\n    gradingStatus: {\n      type: String,\n      enum: ["not_applicable", "auto_graded", "pending_manual", "partially_graded", "manually_overridden"],\n      default: "not_applicable",\n    },\n    startedAt: { type: Date, default: null },\n    expiresAt: { type: Date, default: null },\n    timeSpentSeconds: { type: Number, default: null, min: 0 },\n\n    submittedAt: {
+    answers: {
+      type: [{
+        questionId: { type: mongoose.Schema.Types.ObjectId, required: true },
+        answer: { type: String, default: "" },
+      }],
+      default: [],
+    },
+
+    autoScore: { type: Number, default: null, min: 0 },
+    manualScore: { type: Number, default: null, min: 0 },
+    maxScore: { type: Number, default: null, min: 0 },
+    isAutoGraded: { type: Boolean, default: false },
+    gradingStatus: {
+      type: String,
+      enum: ["not_applicable", "auto_graded", "pending_manual", "partially_graded", "manually_overridden"],
+      default: "not_applicable",
+    },
+    startedAt: { type: Date, default: null },
+    expiresAt: { type: Date, default: null },
+    timeSpentSeconds: { type: Number, default: null, min: 0 },
+
+    submittedAt: {
       type: Date,
       default: Date.now,
     },
