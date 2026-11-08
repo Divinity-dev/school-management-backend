@@ -392,3 +392,83 @@ export const getDashboardStats = async (req, res) => {
     });
   }
 };
+
+/*
+|--------------------------------------------------------------------------
+| Super Admin: school subscription pricing
+|--------------------------------------------------------------------------
+*/
+export const getSchoolSubscriptionPricing = async (req, res) => {
+  try {
+    const schools = await School.find({})
+      .select("name email subscriptionPricing")
+      .sort({ name: 1 })
+      .lean();
+
+    return res.status(200).json({
+      schools: schools.map((school) => ({
+        _id: school._id,
+        name: school.name,
+        email: school.email,
+        pricePerStudent: Number(
+          school.subscriptionPricing?.pricePerStudent ?? 1500
+        ),
+        isCustom: Boolean(school.subscriptionPricing?.isCustom),
+      })),
+      defaultPricePerStudent: 1500,
+      currency: "NGN",
+    });
+  } catch (error) {
+    console.error("Get school subscription pricing error:", error);
+    return res.status(500).json({
+      message: "Failed to retrieve school subscription pricing.",
+    });
+  }
+};
+
+export const updateSchoolSubscriptionPricing = async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { pricePerStudent, useDefault = false } = req.body;
+
+    if (!useDefault && (
+      pricePerStudent === undefined ||
+      !Number.isFinite(Number(pricePerStudent)) ||
+      Number(pricePerStudent) <= 0
+    )) {
+      return res.status(400).json({
+        message: "Enter a valid subscription price greater than zero.",
+      });
+    }
+
+    const school = await School.findById(schoolId);
+    if (!school) {
+      return res.status(404).json({ message: "School not found." });
+    }
+
+    school.subscriptionPricing = {
+      pricePerStudent: useDefault ? 1500 : Number(pricePerStudent),
+      isCustom: !useDefault && Number(pricePerStudent) !== 1500,
+      updatedAt: new Date(),
+      updatedBy: req.user._id,
+    };
+
+    await school.save();
+
+    return res.status(200).json({
+      message: useDefault
+        ? "School subscription price restored to the default."
+        : "School subscription price updated successfully.",
+      pricing: {
+        schoolId: school._id,
+        pricePerStudent: school.subscriptionPricing.pricePerStudent,
+        isCustom: school.subscriptionPricing.isCustom,
+      },
+    });
+  } catch (error) {
+    console.error("Update school subscription pricing error:", error);
+    return res.status(500).json({
+      message: "Failed to update school subscription pricing.",
+    });
+  }
+};
