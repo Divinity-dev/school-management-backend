@@ -4,6 +4,7 @@ const examSubmissionSchema = new mongoose.Schema({
   exam: { type: mongoose.Schema.Types.ObjectId, ref: "Exam", required: true },
   student: { type: mongoose.Schema.Types.ObjectId, ref: "Student", required: true },
   school: { type: mongoose.Schema.Types.ObjectId, ref: "School", required: true },
+  questionOrder: { type: [{ type: mongoose.Schema.Types.ObjectId }], default: [] },
   answers: [{ questionId: { type: mongoose.Schema.Types.ObjectId, required: true }, answer: { type: String, default: "" } }],
   startedAt: { type: Date, default: Date.now },
   expiresAt: { type: Date, required: true },
