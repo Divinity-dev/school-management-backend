@@ -76,10 +76,6 @@ export const startCbtAttempt = async (req, res) => {
     if (!assignment.durationMinutes || !assignment.questions.length) {
       return res.status(400).json({ message: "This CBT is not fully configured." });
     }
-    if (new Date() > new Date(assignment.dueDate)) {
-      return res.status(400).json({ message: "The CBT deadline has passed." });
-    }
-
     let submission = await AssignmentSubmission.findOne({
       assignment: assignment._id,
       student: student._id,
@@ -98,6 +94,9 @@ export const startCbtAttempt = async (req, res) => {
     }
 
     if (!submission) {
+      if (new Date() > new Date(assignment.dueDate)) {
+        return res.status(400).json({ message: "The CBT deadline has passed." });
+      }
       const startedAt = new Date();
       const expiresAt = new Date(
         startedAt.getTime() + assignment.durationMinutes * 60 * 1000
