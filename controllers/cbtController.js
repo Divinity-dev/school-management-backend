@@ -205,12 +205,16 @@ export const submitCbtAttempt = async (req, res) => {
     await submission.save();
 
     if (!hasManualQuestions) {
-      await syncCbtExamScoreToResult({
-        assignment,
-        student,
-        scorePercent: autoScore,
-        source: "cbt",
-      });
+      try {
+        await syncCbtExamScoreToResult({
+          assignment,
+          student,
+          scorePercent: autoScore,
+          source: "cbt",
+        });
+      } catch (syncError) {
+        console.error("CBT score saved, but result synchronization failed:", syncError);
+      }
     }
 
     return res.status(200).json({
