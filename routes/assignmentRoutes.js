@@ -17,7 +17,7 @@ import {
 
 import { protect } from "../middleware/authMiddleware.js";
 import { requireActiveSubscription } from "../middleware/subscriptionMiddleware.js";
-import { startCbtAttempt, submitCbtAttempt } from "../controllers/cbtController.js";
+import { startCbtAttempt, submitCbtAttempt, saveCbtAnswers } from "../controllers/cbtController.js";
 
 const router = express.Router();
 
@@ -139,6 +139,13 @@ router.post(
   protect,
   requireActiveSubscription,
   startCbtAttempt
+);
+
+router.patch(
+  "/:assignmentId/cbt/answers",
+  protect,
+  requireActiveSubscription,
+  saveCbtAnswers
 );
 
 router.post(
