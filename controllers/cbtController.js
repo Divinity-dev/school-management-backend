@@ -160,7 +160,10 @@ export const submitCbtAttempt = async (req, res) => {
       return res.status(409).json({ message: "No active CBT attempt was found." });
     }
 
-    const submittedAnswers = Array.isArray(req.body.answers) ? req.body.answers : [];
+    const attemptExpired = new Date() >= new Date(submission.expiresAt);
+    const submittedAnswers = attemptExpired
+      ? submission.answers
+      : Array.isArray(req.body.answers) ? req.body.answers : [];
     const answerMap = new Map(
       submittedAnswers.map((item) => [String(item.questionId), String(item.answer ?? "")])
     );
