@@ -382,6 +382,9 @@ export const getStudentAssignments = async (req, res) => {
 
       return {
         ...assignment.toObject(),
+        questions: assignment.assessmentMode === "cbt"
+          ? assignment.questions.map(({ correctAnswer, acceptedAnswers, ...question }) => question)
+          : assignment.questions,
 
         submission: submission
           ? {
@@ -503,8 +506,15 @@ export const getStudentAssignmentSubmission = async (req, res) => {
       });
     }
 
+    const safeAssignment = assignment.toObject();
+    if (safeAssignment.assessmentMode === "cbt") {
+      safeAssignment.questions = (safeAssignment.questions || []).map(
+        ({ correctAnswer, acceptedAnswers, ...question }) => question
+      );
+    }
+
     return res.status(200).json({
-      assignment,
+      assignment: safeAssignment,
       submission,
     });
   } catch (error) {
@@ -855,6 +865,7 @@ export const gradeAssignmentSubmission = async (req, res) => {
     }
 
     if (
+      assignment.assessmentMode !== "cbt" &&
       !submission.content?.trim() &&
       (!Array.isArray(submission.attachments) ||
         submission.attachments.length === 0)
@@ -866,6 +877,10 @@ export const gradeAssignmentSubmission = async (req, res) => {
     }
 
     submission.score = numericScore;
+    if (assignment.assessmentMode === "cbt") {
+      submission.manualScore = numericScore;
+      submission.gradingStatus = "manually_overridden";
+    }
     submission.feedback =
       typeof feedback === "string" ? feedback.trim() : "";
     submission.status = "graded";
