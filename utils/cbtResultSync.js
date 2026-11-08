@@ -21,7 +21,6 @@ export const syncCbtExamScoreToResult = async ({
   const result = await Result.findOne({
     school: assignment.school,
     student: student._id,
-    schoolClass: assignment.schoolClass,
     subject: assignment.subject,
     academicSession: assignment.academicSession,
     academicTerm: assignment.term,
@@ -90,6 +89,7 @@ export const syncCbtExamScoreToResult = async ({
       enteredBy: assignment.teacher,
     });
   } else {
+    result.schoolClass = assignment.schoolClass;
     result.assessmentScores = assessmentScores;
     result.caScore = caScore;
     result.examScore = examScore;
