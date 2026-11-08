@@ -3,7 +3,7 @@ import AssignmentSubmission from "../models/AssignmentSubmission.js";
 import Student from "../models/Student.js";
 
 const normalize = (value) =>
-  String(value ?? "").trim().toLowerCase().replace(/\\s+/g, " ");
+  String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 
 const getStudentAndAssignment = async (req) => {
   const student = await Student.findOne({
