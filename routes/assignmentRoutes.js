@@ -17,6 +17,7 @@ import {
 
 import { protect } from "../middleware/authMiddleware.js";
 import { requireActiveSubscription } from "../middleware/subscriptionMiddleware.js";
+import { startCbtAttempt, submitCbtAttempt, saveCbtAnswers } from "../controllers/cbtController.js";
 
 const router = express.Router();
 
@@ -126,6 +127,32 @@ router.patch(
   protect,
   requireActiveSubscription,
   closeAssignment
+);
+
+/*
+|--------------------------------------------------------------------------
+| Computer-Based Test
+|--------------------------------------------------------------------------
+*/
+router.post(
+  "/:assignmentId/cbt/start",
+  protect,
+  requireActiveSubscription,
+  startCbtAttempt
+);
+
+router.patch(
+  "/:assignmentId/cbt/answers",
+  protect,
+  requireActiveSubscription,
+  saveCbtAnswers
+);
+
+router.post(
+  "/:assignmentId/cbt/submit",
+  protect,
+  requireActiveSubscription,
+  submitCbtAttempt
 );
 
 /*

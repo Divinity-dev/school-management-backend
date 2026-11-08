@@ -20,6 +20,32 @@ const assignmentSubmissionSchema = new mongoose.Schema(
       required: true,
     },
 
+    questionOrder: {
+      type: [{ type: mongoose.Schema.Types.ObjectId }],
+      default: [],
+    },
+
+    answers: {
+      type: [{
+        questionId: { type: mongoose.Schema.Types.ObjectId, required: true },
+        answer: { type: String, default: "" },
+      }],
+      default: [],
+    },
+
+    autoScore: { type: Number, default: null, min: 0 },
+    manualScore: { type: Number, default: null, min: 0 },
+    maxScore: { type: Number, default: null, min: 0 },
+    isAutoGraded: { type: Boolean, default: false },
+    gradingStatus: {
+      type: String,
+      enum: ["not_applicable", "auto_graded", "pending_manual", "partially_graded", "manually_overridden"],
+      default: "not_applicable",
+    },
+    startedAt: { type: Date, default: null },
+    expiresAt: { type: Date, default: null },
+    timeSpentSeconds: { type: Number, default: null, min: 0 },
+
     submittedAt: {
       type: Date,
       default: Date.now,
@@ -52,7 +78,7 @@ const assignmentSubmissionSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["submitted", "graded", "returned"],
+      enum: ["in_progress", "submitted", "graded", "returned"],
       default: "submitted",
     },
   },

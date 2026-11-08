@@ -445,6 +445,7 @@ export const createResult = async (req, res) => {
       assessmentScores: calculated.assessmentScores,
       caScore: calculated.caScore,
       examScore: calculated.examScore,
+      examScoreSource: "manual",
       total: calculated.total,
       grade: calculated.grade,
       remark: calculated.remark,
@@ -517,6 +518,7 @@ export const updateResult = async (req, res) => {
     result.assessmentScores = calculated.assessmentScores;
     result.caScore = calculated.caScore;
     result.examScore = calculated.examScore;
+    result.examScoreSource = "manual";
     result.total = calculated.total;
     result.grade = calculated.grade;
     result.remark = calculated.remark;

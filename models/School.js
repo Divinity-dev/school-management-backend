@@ -618,6 +618,27 @@ const schoolSchema = new mongoose.Schema(
       },
     },
 
+    subscriptionPricing: {
+      pricePerStudent: {
+        type: Number,
+        default: 1500,
+        min: 0,
+      },
+      isCustom: {
+        type: Boolean,
+        default: false,
+      },
+      updatedAt: {
+        type: Date,
+        default: null,
+      },
+      updatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+    },
+
     enableClassRanking: {
       type: Boolean,
       default: false,

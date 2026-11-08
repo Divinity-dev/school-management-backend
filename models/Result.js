@@ -164,6 +164,12 @@ const resultSchema = new mongoose.Schema(
       min: 0,
     },
 
+    examScoreSource: {
+      type: String,
+      enum: ["pending", "cbt", "manual"],
+      default: "pending",
+    },
+
     examScore: {
       type: Number,
       required: true,
