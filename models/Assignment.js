@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-const assignmentSchema = new mongoose.Schema(
+const questionOptionSchema = new mongoose.Schema({\n  text: { type: String, required: true, trim: true, maxlength: 1000 },\n  value: { type: String, required: true, trim: true },\n}, { _id: false });\n\nconst assessmentQuestionSchema = new mongoose.Schema({\n  question: { type: String, required: true, trim: true, maxlength: 5000 },\n  type: { type: String, enum: ["multiple_choice", "true_false", "short_answer", "essay"], required: true },\n  options: { type: [questionOptionSchema], default: [] },\n  correctAnswer: { type: String, trim: true, default: "" },\n  acceptedAnswers: { type: [String], default: [] },\n  marks: { type: Number, required: true, min: 0.01, default: 1 },\n  order: { type: Number, default: 0 },\n}, { _id: true });\n\nconst assignmentSchema = new mongoose.Schema(
   {
     school: {
       type: mongoose.Schema.Types.ObjectId,
