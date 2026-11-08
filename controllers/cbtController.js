@@ -1,7 +1,6 @@
 import Assignment from "../models/Assignment.js";
 import AssignmentSubmission from "../models/AssignmentSubmission.js";
 import Student from "../models/Student.js";
-import { syncCbtExamScoreToResult } from "../utils/cbtResultSync.js";
 
 const normalize = (value) =>
   String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -209,19 +208,6 @@ export const submitCbtAttempt = async (req, res) => {
       Math.floor((now.getTime() - new Date(submission.startedAt).getTime()) / 1000)
     );
     await submission.save();
-
-    if (!hasManualQuestions) {
-      try {
-        await syncCbtExamScoreToResult({
-          assignment,
-          student,
-          scorePercent: autoScore,
-          source: "cbt",
-        });
-      } catch (syncError) {
-        console.error("CBT score saved, but result synchronization failed:", syncError);
-      }
-    }
 
     return res.status(200).json({
       message: hasManualQuestions
