@@ -97,6 +97,27 @@ const assignmentSchema = new mongoose.Schema(
       default: "",
     },
 
+    assessmentMode: {
+      type: String,
+      enum: ["written", "cbt"],
+      default: "written",
+    },
+
+    durationMinutes: {
+      type: Number,
+      min: 1,
+      max: 300,
+      default: null,
+    },
+
+    questions: {
+      type: [assessmentQuestionSchema],
+      default: [],
+    },
+
+    shuffleQuestions: { type: Boolean, default: false },
+    showResultsImmediately: { type: Boolean, default: false },
+
     status: {
       type: String,
       enum: ["draft", "published", "closed"],
