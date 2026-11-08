@@ -189,7 +189,7 @@ export const startExam = async (req, res) => {
       expiresAt: new Date(Math.min(now.getTime() + exam.durationMinutes * 60000, new Date(exam.endsAt).getTime())),
       maxScore: exam.totalMarks,
     });
-    return res.status(201).json({ message: "Examination started.", attempt: safeSubmission(submission), questions: publicQuestions(exam.questions) });
+    return res.status(201).json({ message: "Examination started.", attempt: safeSubmission(submission), questions: publicQuestions(exam.shuffleQuestions ? [...exam.questions].sort(() => Math.random() - 0.5) : exam.questions) });
   } catch (error) { return res.status(500).json({ message: "Unable to start examination." }); }
 };
 
@@ -199,7 +199,7 @@ export const saveExamAnswers = async (req, res) => {
   if (!student || !exam || id(student.schoolClass) !== id(exam.schoolClass)) return res.status(404).json({ message: "Examination not found." });
   const submission = await ExamSubmission.findOne({ exam: exam._id, student: student._id, status: "in_progress" });
   if (!submission) return res.status(404).json({ message: "Active examination attempt not found." });
-  if (new Date() > submission.expiresAt || new Date() > exam.endsAt) return res.status(400).json({ message: "The examination time has expired. Submit your answers." });
+  if (new Date() > submission.expiresAt || new Date() > exam.endsAt) return res.json({ message: "The examination time has expired. Your previously saved answers will be submitted.", saved: submission.answers.length, expired: true });
   const validIds = new Set(exam.questions.map(q => id(q._id)));
   const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
   submission.answers = answers.filter(a => validIds.has(id(a.questionId))).map(a => ({ questionId: a.questionId, answer: String(a.answer || "").slice(0, 12000) }));
