@@ -515,7 +515,7 @@ export const getStudentAssignmentSubmission = async (req, res) => {
     }
     if (safeAssignment.assessmentMode === "cbt") {
       safeAssignment.questions = (safeAssignment.questions || []).map(
-        ({ correctAnswer, acceptedAnswers, ...question }) => question
+        ({ correctAnswer, acceptedAnswers, explanation, ...question }) => question
       );
     }
 
