@@ -143,7 +143,8 @@ export const getExam = async (req, res) => {
     if (!exam) return res.status(404).json({ message: "Examination not found." });
     if (req.user.role === "student") {
       const student = await getStudent(req);
-      if (!student || id(student.schoolClass) !== id(exam.schoolClass) || exam.status !== "published") return res.status(403).json({ message: "You cannot access this examination." });
+      const existingAttempt = student ? await ExamSubmission.exists({ exam: exam._id, student: student._id }) : null;
+      if (!student || id(student.schoolClass) !== id(exam.schoolClass) || (exam.status !== "published" && !existingAttempt)) return res.status(403).json({ message: "You cannot access this examination." });
       return res.json({ exam: { ...exam.toObject(), questions: undefined } });
     }
     if (req.user.role === "teacher" && !canManage(req.user, exam)) return res.status(403).json({ message: "You cannot access this examination." });
