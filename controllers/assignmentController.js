@@ -932,6 +932,10 @@ export const publishAssignment = async (req, res) => {
       });
     }
 
+    if (assignment.assessmentMode === "cbt" && (!assignment.durationMinutes || !assignment.questions?.length)) {
+      return res.status(400).json({ message: "Add CBT questions and set the exam duration before publishing." });
+    }
+
     assignment.status = "published";
 
     await assignment.save();
