@@ -385,7 +385,7 @@ export const getStudentAssignments = async (req, res) => {
       return {
         ...assignment.toObject(),
         questions: assignment.assessmentMode === "cbt"
-          ? assignment.questions.map(({ correctAnswer, acceptedAnswers, ...question }) => question)
+          ? assignment.questions.map(({ correctAnswer, acceptedAnswers, explanation, ...question }) => question)
           : assignment.questions,
 
         submission: submission
