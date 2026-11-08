@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import User from "../models/User.js";
 import Student from "../models/Student.js";
 import School from "../models/School.js";
@@ -431,9 +432,13 @@ export const updateSchoolSubscriptionPricing = async (req, res) => {
     const { schoolId } = req.params;
     const { pricePerStudent, useDefault = false } = req.body;
 
+    if (!mongoose.Types.ObjectId.isValid(schoolId)) {
+      return res.status(400).json({ message: "Invalid school ID." });
+    }
+
     if (!useDefault && (
       pricePerStudent === undefined ||
-      !Number.isFinite(Number(pricePerStudent)) ||
+      !Number.isInteger(Number(pricePerStudent)) ||
       Number(pricePerStudent) <= 0
     )) {
       return res.status(400).json({
