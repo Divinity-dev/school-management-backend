@@ -196,8 +196,8 @@ export const submitCbtAttempt = async (req, res) => {
       submission: {
         _id: submission._id,
         status: submission.status,
-        score: submission.score,
-        autoScore: submission.autoScore,
+        score: assignment.showResultsImmediately ? submission.score : null,
+        autoScore: assignment.showResultsImmediately ? submission.autoScore : null,
         maxScore: submission.maxScore,
         gradingStatus: submission.gradingStatus,
         submittedAt: submission.submittedAt,
