@@ -294,9 +294,17 @@ export const getCbtReview = async (req, res) => {
     if (req.user.role !== "student") {
       return res.status(403).json({ message: "Only students can review their CBT." });
     }
-    const { student, assignment, error } = await getStudentAndAssignment(req);
-    if (error === "STUDENT_NOT_FOUND") return res.status(404).json({ message: "Student record not found." });
-    if (error) return res.status(404).json({ message: "CBT not found for your class." });
+    const student = await Student.findOne({ user: req.user._id, isActive: true });
+    if (!student) return res.status(404).json({ message: "Student record not found." });
+    const assignment = await Assignment.findOne({
+      _id: req.params.assignmentId,
+      school: student.school,
+      schoolClass: student.schoolClass,
+      academicSession: student.academicSession,
+      status: { $in: ["published", "closed"] },
+      assessmentMode: "cbt",
+    });
+    if (!assignment) return res.status(404).json({ message: "CBT not found for your class." });
 
     const submission = await AssignmentSubmission.findOne({
       assignment: assignment._id,
