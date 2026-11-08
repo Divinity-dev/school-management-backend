@@ -178,7 +178,12 @@ export const startExam = async (req, res) => {
     const now = new Date();
     if (now < exam.startsAt || now > exam.endsAt) return res.status(400).json({ message: "This examination is not currently available." });
     let submission = await ExamSubmission.findOne({ exam: exam._id, student: student._id });
-    if (submission) return res.status(409).json({ message: "You have already started or submitted this examination.", submission: safeSubmission(submission) });
+    if (submission) {
+      if (submission.status === "in_progress" && now <= submission.expiresAt) {
+        return res.json({ message: "Resuming examination.", attempt: safeSubmission(submission), questions: publicQuestions(exam.questions) });
+      }
+      return res.status(409).json({ message: "You have already submitted this examination.", submission: safeSubmission(submission) });
+    }
     submission = await ExamSubmission.create({
       exam: exam._id, student: student._id, school: exam.school,
       expiresAt: new Date(Math.min(now.getTime() + exam.durationMinutes * 60000, new Date(exam.endsAt).getTime())),
