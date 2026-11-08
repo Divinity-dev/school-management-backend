@@ -4,6 +4,7 @@ import SchoolClass from "../models/SchoolClass.js";
 import AcademicTerm from "../models/AcademicTerm.js";
 import Student from "../models/Student.js";
 import AssignmentSubmission from "../models/AssignmentSubmission.js";
+import { syncCbtExamScoreToResult } from "../utils/cbtResultSync.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -890,6 +891,18 @@ export const gradeAssignmentSubmission = async (req, res) => {
     submission.status = "graded";
 
     await submission.save();
+
+    if (assignment.assessmentMode === "cbt") {
+      const studentRecord = await Student.findById(submission.student);
+      if (studentRecord) {
+        await syncCbtExamScoreToResult({
+          assignment,
+          student: studentRecord,
+          scorePercent: numericScore,
+          source: "manual",
+        });
+      }
+    }
 
     const populatedSubmission =
       await AssignmentSubmission.findById(submission._id)
