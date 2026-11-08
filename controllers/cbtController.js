@@ -109,14 +109,13 @@ export const startCbtAttempt = async (req, res) => {
         maxScore,
         answers: [],
       });
-    } else if (new Date() >= new Date(submission.expiresAt)) {
-      return res.status(409).json({
-        message: "Your CBT time has expired. Submit your saved answers.",
-        ...buildAttemptResponse(assignment, submission),
-      });
     }
 
-    return res.status(200).json(buildAttemptResponse(assignment, submission));
+    const attemptResponse = buildAttemptResponse(assignment, submission);
+    return res.status(200).json({
+      ...attemptResponse,
+      timeExpired: new Date() >= new Date(submission.expiresAt),
+    });
   } catch (error) {
     console.error("Start CBT attempt error:", error);
     return res.status(500).json({ message: "Failed to start CBT." });
