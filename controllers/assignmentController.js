@@ -784,7 +784,7 @@ export const getAssignmentSubmission = async (req, res) => {
       )
       .populate(
         "assignment",
-        "title description instructions dueDate status"
+        "title description instructions dueDate status assessmentMode questions"
       );
 
     if (!submission) {
