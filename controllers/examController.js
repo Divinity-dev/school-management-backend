@@ -180,16 +180,23 @@ export const startExam = async (req, res) => {
     let submission = await ExamSubmission.findOne({ exam: exam._id, student: student._id });
     if (submission) {
       if (submission.status === "in_progress") {
-        return res.json({ message: "Resuming examination.", attempt: safeSubmission(submission), questions: publicQuestions(exam.shuffleQuestions ? [...exam.questions].sort(() => Math.random() - 0.5) : exam.questions) });
+        const ordered = submission.questionOrder?.length
+          ? submission.questionOrder.map(questionId => exam.questions.find(question => id(question._id) === id(questionId))).filter(Boolean)
+          : exam.questions;
+        return res.json({ message: "Resuming examination.", attempt: safeSubmission(submission), questions: publicQuestions(ordered) });
       }
       return res.status(409).json({ message: "You have already submitted this examination.", submission: safeSubmission(submission) });
     }
+    const questionOrder = exam.shuffleQuestions
+      ? [...exam.questions].sort(() => Math.random() - 0.5).map(question => question._id)
+      : exam.questions.map(question => question._id);
+    const ordered = questionOrder.map(questionId => exam.questions.find(question => id(question._id) === id(questionId))).filter(Boolean);
     submission = await ExamSubmission.create({
-      exam: exam._id, student: student._id, school: exam.school,
+      exam: exam._id, student: student._id, school: exam.school, questionOrder,
       expiresAt: new Date(Math.min(now.getTime() + exam.durationMinutes * 60000, new Date(exam.endsAt).getTime())),
       maxScore: exam.totalMarks,
     });
-    return res.status(201).json({ message: "Examination started.", attempt: safeSubmission(submission), questions: publicQuestions(exam.shuffleQuestions ? [...exam.questions].sort(() => Math.random() - 0.5) : exam.questions) });
+    return res.status(201).json({ message: "Examination started.", attempt: safeSubmission(submission), questions: publicQuestions(ordered) });
   } catch (error) { return res.status(500).json({ message: "Unable to start examination." }); }
 };
 
