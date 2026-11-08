@@ -1211,6 +1211,13 @@ export const updateAssignment = async (req, res) => {
       assignment.dueDate = parsedDueDate;
     }
 
+    if (
+      assignment.status !== "draft" &&
+      (assessmentMode !== undefined || durationMinutes !== undefined || questions !== undefined)
+    ) {
+      return res.status(400).json({ message: "CBT settings and questions can only be changed while the assignment is a draft." });
+    }
+
     if (assessmentMode !== undefined) {
       if (!["written", "cbt"].includes(assessmentMode)) {
         return res.status(400).json({ message: "Invalid assessment mode." });
