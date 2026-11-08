@@ -30,7 +30,12 @@ export const syncCbtExamScoreToResult = async ({
   if (result && result.status !== "draft") {
     return { synced: false, reason: "RESULT_NOT_DRAFT" };
   }
-  if (result?.examScoreSource === "manual" && source === "cbt") {
+  if (
+    result &&
+    source === "cbt" &&
+    (result.examScoreSource === "manual" ||
+      (result.examScoreSource === "pending" && Number(result.examScore) > 0))
+  ) {
     return { synced: false, reason: "MANUAL_SCORE_PRESERVED" };
   }
 
