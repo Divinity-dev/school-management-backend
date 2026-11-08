@@ -209,6 +209,7 @@ export const createAssignment = async (req, res) => {
           if (!Array.isArray(question.options) || question.options.length < 2) return true;
           if (!question.options.some((option) => option.value === question.correctAnswer)) return true;
         }
+        if (question.type === "short_answer" && !question.correctAnswer?.trim()) return true;
         return false;
       });
       if (invalidQuestion) {
@@ -1232,6 +1233,7 @@ export const updateAssignment = async (req, res) => {
             return !Array.isArray(question.options) || question.options.length < 2 ||
               !question.options.some((option) => option.value === question.correctAnswer);
           }
+          if (question.type === "short_answer") return !question.correctAnswer?.trim();
           return false;
         });
         if (invalidQuestion) {
