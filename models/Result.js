@@ -166,7 +166,7 @@ const resultSchema = new mongoose.Schema(
 
     examScoreSource: {
       type: String,
-      enum: ["pending", "cbt", "manual"],
+      enum: ["pending", "cbt", "formal_exam", "manual"],
       default: "pending",
     },
 

@@ -503,9 +503,13 @@ export const updateResult = async (req, res) => {
 
     const gradingSystem = getConfiguredGradingSystem(school);
 
+    const examScoreProvided = !(examScore === undefined || examScore === null || examScore === "");
+    const effectiveExamScore = !examScoreProvided && result.examScoreSource !== "pending"
+      ? result.examScore
+      : examScore;
     const calculated = calculateResultScores({
       assessmentScores,
-      examScore,
+      examScore: effectiveExamScore,
       gradingSystem,
     });
 
@@ -518,7 +522,7 @@ export const updateResult = async (req, res) => {
     result.assessmentScores = calculated.assessmentScores;
     result.caScore = calculated.caScore;
     result.examScore = calculated.examScore;
-    result.examScoreSource = "manual";
+    if (examScoreProvided) result.examScoreSource = "manual";
     result.total = calculated.total;
     result.grade = calculated.grade;
     result.remark = calculated.remark;
@@ -1510,13 +1514,18 @@ export const submitTeacherResults = async (req, res) => {
         caScore += score;
       }
 
-      let numericExamScore = null;
+      const examScoreProvided = !(
+        item.examScore === "" ||
+        item.examScore === null ||
+        item.examScore === undefined
+      );
+      let numericExamScore = !examScoreProvided &&
+        existingResult &&
+        existingResult.examScoreSource !== "pending"
+          ? Number(existingResult.examScore)
+          : null;
 
-      if (
-        item.examScore !== "" &&
-        item.examScore !== null &&
-        item.examScore !== undefined
-      ) {
+      if (examScoreProvided) {
         numericExamScore = Number(item.examScore);
 
         if (!Number.isFinite(numericExamScore)) {
@@ -1582,6 +1591,9 @@ export const submitTeacherResults = async (req, res) => {
           assessmentScores,
           caScore,
           examScore: numericExamScore,
+          examScoreSource: examScoreProvided
+            ? "manual"
+            : (existingResult?.examScoreSource || "pending"),
           total,
           grade,
           remark,
