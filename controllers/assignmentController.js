@@ -1080,6 +1080,11 @@ export const updateAssignment = async (req, res) => {
       dueDate,
       attachmentUrl,
       attachmentName,
+      assessmentMode,
+      durationMinutes,
+      questions,
+      shuffleQuestions,
+      showResultsImmediately,
     } = req.body;
 
     // Validate title
@@ -1163,6 +1168,46 @@ export const updateAssignment = async (req, res) => {
       }
 
       assignment.dueDate = parsedDueDate;
+    }
+
+    if (assessmentMode !== undefined) {
+      if (!["written", "cbt"].includes(assessmentMode)) {
+        return res.status(400).json({ message: "Invalid assessment mode." });
+      }
+      assignment.assessmentMode = assessmentMode;
+    }
+
+    if (assignment.assessmentMode === "cbt") {
+      if (durationMinutes !== undefined) {
+        const duration = Number(durationMinutes);
+        if (!Number.isInteger(duration) || duration < 1 || duration > 300) {
+          return res.status(400).json({ message: "CBT duration must be between 1 and 300 minutes." });
+        }
+        assignment.durationMinutes = duration;
+      }
+      if (questions !== undefined) {
+        if (!Array.isArray(questions) || questions.length < 1) {
+          return res.status(400).json({ message: "A CBT must contain at least one question." });
+        }
+        const invalidQuestion = questions.find((question) => {
+          if (!question.question?.trim() || !Number.isFinite(Number(question.marks)) || Number(question.marks) <= 0) return true;
+          if (!["multiple_choice", "true_false", "short_answer", "essay"].includes(question.type)) return true;
+          if (["multiple_choice", "true_false"].includes(question.type)) {
+            return !Array.isArray(question.options) || question.options.length < 2 ||
+              !question.options.some((option) => option.value === question.correctAnswer);
+          }
+          return false;
+        });
+        if (invalidQuestion) {
+          return res.status(400).json({ message: "Check every question, its options, correct answer and marks." });
+        }
+        assignment.questions = questions;
+      }
+      if (shuffleQuestions !== undefined) assignment.shuffleQuestions = Boolean(shuffleQuestions);
+      if (showResultsImmediately !== undefined) assignment.showResultsImmediately = Boolean(showResultsImmediately);
+      if (!assignment.durationMinutes || !assignment.questions?.length) {
+        return res.status(400).json({ message: "CBT duration and questions are required." });
+      }
     }
 
     await assignment.save();
