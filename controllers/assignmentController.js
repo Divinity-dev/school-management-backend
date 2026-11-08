@@ -390,7 +390,7 @@ export const getStudentAssignments = async (req, res) => {
           ? {
               _id: submission._id,
               submittedAt: submission.submittedAt,
-              score: submission.score,
+              score: assignment.assessmentMode === "cbt" && !assignment.showResultsImmediately ? null : submission.score,
               feedback: submission.feedback,
               status: submission.status,
               attachments: submission.attachments,
@@ -507,6 +507,10 @@ export const getStudentAssignmentSubmission = async (req, res) => {
     }
 
     const safeAssignment = assignment.toObject();
+    if (safeAssignment.assessmentMode === "cbt" && !safeAssignment.showResultsImmediately) {
+      submission.score = null;
+      submission.autoScore = null;
+    }
     if (safeAssignment.assessmentMode === "cbt") {
       safeAssignment.questions = (safeAssignment.questions || []).map(
         ({ correctAnswer, acceptedAnswers, ...question }) => question
