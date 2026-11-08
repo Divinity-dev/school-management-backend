@@ -51,6 +51,11 @@ export const createAssignment = async (req, res) => {
       dueDate,
       attachmentUrl,
       attachmentName,
+      assessmentMode = "written",
+      durationMinutes,
+      questions = [],
+      shuffleQuestions = false,
+      showResultsImmediately = false,
     } = req.body;
 
     if (!subjectAssignmentId || !term || !title || !dueDate) {
@@ -184,6 +189,32 @@ export const createAssignment = async (req, res) => {
       });
     }
 
+    if (!["written", "cbt"].includes(assessmentMode)) {
+      return res.status(400).json({ message: "Invalid assessment mode." });
+    }
+
+    if (assessmentMode === "cbt") {
+      if (!Number.isInteger(Number(durationMinutes)) || Number(durationMinutes) < 1 || Number(durationMinutes) > 300) {
+        return res.status(400).json({ message: "CBT duration must be between 1 and 300 minutes." });
+      }
+      if (!Array.isArray(questions) || questions.length < 1) {
+        return res.status(400).json({ message: "Add at least one CBT question." });
+      }
+      const invalidQuestion = questions.find((question) => {
+        const marks = Number(question.marks);
+        if (!question.question?.trim() || !Number.isFinite(marks) || marks <= 0) return true;
+        if (!["multiple_choice", "true_false", "short_answer", "essay"].includes(question.type)) return true;
+        if (["multiple_choice", "true_false"].includes(question.type)) {
+          if (!Array.isArray(question.options) || question.options.length < 2) return true;
+          if (!question.options.some((option) => option.value === question.correctAnswer)) return true;
+        }
+        return false;
+      });
+      if (invalidQuestion) {
+        return res.status(400).json({ message: "Check every question, its options, correct answer and marks." });
+      }
+    }
+
     const dueDateValue = new Date(dueDate);
 
     if (Number.isNaN(dueDateValue.getTime())) {
@@ -206,6 +237,11 @@ export const createAssignment = async (req, res) => {
       dueDate: dueDateValue,
       attachmentUrl,
       attachmentName,
+      assessmentMode,
+      durationMinutes: assessmentMode === "cbt" ? Number(durationMinutes) : null,
+      questions: assessmentMode === "cbt" ? questions : [],
+      shuffleQuestions: Boolean(shuffleQuestions),
+      showResultsImmediately: Boolean(showResultsImmediately),
       status: "draft",
     });
 
