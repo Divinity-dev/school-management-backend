@@ -128,11 +128,11 @@ export const getStudentExams = async (req, res) => {
   try {
     const student = await getStudent(req);
     if (!student) return res.status(404).json({ message: "Student profile not found." });
-    const exams = await Exam.find({ school: req.user.school, schoolClass: student.schoolClass, status: "published" })
+    const exams = await Exam.find({ school: req.user.school, schoolClass: student.schoolClass, status: { $in: ["published", "closed"] } })
       .populate("subject", "name code").populate("schoolClass", "name arm").populate("academicTerm", "name").sort({ startsAt: 1 });
     const submissions = await ExamSubmission.find({ student: student._id, exam: { $in: exams.map(e => e._id) } });
     const byExam = new Map(submissions.map(s => [id(s.exam), s]));
-    return res.json({ exams: exams.map(exam => ({ ...exam.toObject(), questions: undefined, submission: byExam.has(id(exam)) ? safeSubmission(byExam.get(id(exam))) : null })) });
+    return res.json({ exams: exams.filter(exam => exam.status === "published" || byExam.has(id(exam))).map(exam => ({ ...exam.toObject(), questions: undefined, submission: byExam.has(id(exam)) ? safeSubmission(byExam.get(id(exam))) : null })) });
   } catch (error) { return res.status(500).json({ message: "Failed to fetch your examinations." }); }
 };
 
@@ -172,11 +172,10 @@ export const startExam = async (req, res) => {
   try {
     const [student, exam] = await Promise.all([
       getStudent(req),
-      Exam.findOne({ _id: req.params.examId, school: req.user.school, status: "published" }),
+      Exam.findOne({ _id: req.params.examId, school: req.user.school }),
     ]);
     if (!student || !exam || id(student.schoolClass) !== id(exam.schoolClass)) return res.status(404).json({ message: "Examination not found for your class." });
     const now = new Date();
-    if (now < exam.startsAt || now > exam.endsAt) return res.status(400).json({ message: "This examination is not currently available." });
     let submission = await ExamSubmission.findOne({ exam: exam._id, student: student._id });
     if (submission) {
       if (submission.status === "in_progress") {
@@ -187,6 +186,7 @@ export const startExam = async (req, res) => {
       }
       return res.status(409).json({ message: "You have already submitted this examination.", submission: safeSubmission(submission) });
     }
+    if (exam.status !== "published" || now < exam.startsAt || now > exam.endsAt) return res.status(400).json({ message: "This examination is not currently available." });
     const questionOrder = exam.shuffleQuestions
       ? [...exam.questions].sort(() => Math.random() - 0.5).map(question => question._id)
       : exam.questions.map(question => question._id);
