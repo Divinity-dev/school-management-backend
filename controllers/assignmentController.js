@@ -896,12 +896,16 @@ export const gradeAssignmentSubmission = async (req, res) => {
     if (assignment.assessmentMode === "cbt") {
       const studentRecord = await Student.findById(submission.student);
       if (studentRecord) {
-        await syncCbtExamScoreToResult({
-          assignment,
-          student: studentRecord,
-          scorePercent: numericScore,
-          source: "manual",
-        });
+        try {
+          await syncCbtExamScoreToResult({
+            assignment,
+            student: studentRecord,
+            scorePercent: numericScore,
+            source: "manual",
+          });
+        } catch (syncError) {
+          console.error("CBT score override saved, but result synchronization failed:", syncError);
+        }
       }
     }
 
