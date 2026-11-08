@@ -35,14 +35,20 @@ const studentSafeQuestions = (questions) =>
     order: question.order,
   }));
 
-const buildAttemptResponse = (assignment, submission) => ({
+const buildAttemptResponse = (assignment, submission) => {
+  const questionsById = new Map(assignment.questions.map((question) => [String(question._id), question]));
+  const orderedQuestions = (submission.questionOrder || []).length
+    ? submission.questionOrder.map((id) => questionsById.get(String(id))).filter(Boolean)
+    : assignment.questions;
+
+  return {
   assignment: {
     _id: assignment._id,
     title: assignment.title,
     description: assignment.description,
     instructions: assignment.instructions,
     durationMinutes: assignment.durationMinutes,
-    questions: studentSafeQuestions(assignment.questions),
+    questions: studentSafeQuestions(orderedQuestions),
   },
   attempt: {
     _id: submission._id,
@@ -51,7 +57,8 @@ const buildAttemptResponse = (assignment, submission) => ({
     status: submission.status,
     answers: submission.answers,
   },
-});
+  };
+};
 
 export const startCbtAttempt = async (req, res) => {
   try {
@@ -98,6 +105,10 @@ export const startCbtAttempt = async (req, res) => {
         (total, question) => total + Number(question.marks || 0),
         0
       );
+      const questionOrder = assignment.questions.map((question) => question._id);
+      if (assignment.shuffleQuestions) {
+        questionOrder.sort(() => Math.random() - 0.5);
+      }
 
       submission = await AssignmentSubmission.create({
         assignment: assignment._id,
@@ -107,10 +118,15 @@ export const startCbtAttempt = async (req, res) => {
         startedAt,
         expiresAt,
         maxScore,
+        questionOrder,
         answers: [],
       });
     }
 
+    if (!submission.questionOrder?.length) {
+      submission.questionOrder = assignment.questions.map((question) => question._id);
+      await submission.save();
+    }
     const attemptResponse = buildAttemptResponse(assignment, submission);
     return res.status(200).json({
       ...attemptResponse,
