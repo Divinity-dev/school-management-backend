@@ -87,7 +87,7 @@ export const startCbtAttempt = async (req, res) => {
         message: "You have already submitted this CBT.",
         submission: {
           status: submission.status,
-          score: submission.score,
+          score: assignment.showResultsImmediately ? submission.score : null,
           gradingStatus: submission.gradingStatus,
         },
       });
