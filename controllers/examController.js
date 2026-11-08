@@ -34,7 +34,7 @@ const syncFormalExamScore = async ({ exam, student, submission }) => {
     subject: exam.subject, academicSession: exam.academicSession, academicTerm: exam.academicTerm,
   });
   if (result && result.status !== "draft") return { synced: false, reason: "RESULT_NOT_DRAFT" };
-  if (result?.examScoreSource === "manual") return { synced: false, reason: "MANUAL_SCORE_PRESERVED" };
+  if (result && (result.examScoreSource === "manual" || (result.examScoreSource === "pending" && Number(result.examScore) > 0))) return { synced: false, reason: "MANUAL_SCORE_PRESERVED" };
 
   const examScore = Number(((Number(submission.percentage) / 100) * examMaximum).toFixed(2));
   const assessmentScores = result?.assessmentScores?.length ? result.assessmentScores :
@@ -179,8 +179,8 @@ export const startExam = async (req, res) => {
     if (now < exam.startsAt || now > exam.endsAt) return res.status(400).json({ message: "This examination is not currently available." });
     let submission = await ExamSubmission.findOne({ exam: exam._id, student: student._id });
     if (submission) {
-      if (submission.status === "in_progress" && now <= submission.expiresAt) {
-        return res.json({ message: "Resuming examination.", attempt: safeSubmission(submission), questions: publicQuestions(exam.questions) });
+      if (submission.status === "in_progress") {
+        return res.json({ message: "Resuming examination.", attempt: safeSubmission(submission), questions: publicQuestions(exam.shuffleQuestions ? [...exam.questions].sort(() => Math.random() - 0.5) : exam.questions) });
       }
       return res.status(409).json({ message: "You have already submitted this examination.", submission: safeSubmission(submission) });
     }
@@ -216,7 +216,7 @@ export const submitExam = async (req, res) => {
     if (!submission) return res.status(404).json({ message: "Active examination attempt not found." });
     const now = new Date();
     if (now < submission.startedAt) return res.status(400).json({ message: "Invalid attempt time." });
-    const answers = Array.isArray(req.body.answers) ? req.body.answers : submission.answers;
+    const answers = now <= submission.expiresAt && Array.isArray(req.body.answers) ? req.body.answers : submission.answers;
     const validIds = new Set(exam.questions.map(q => id(q._id)));
     submission.answers = answers.filter(a => validIds.has(id(a.questionId))).map(a => ({ questionId: a.questionId, answer: String(a.answer || "").slice(0, 12000) }));
     const { autoScore, pendingManual } = calculate(exam, submission.answers);
@@ -229,7 +229,7 @@ export const submitExam = async (req, res) => {
     submission.timeSpentSeconds = Math.max(0, Math.floor((now - submission.startedAt) / 1000));
     await submission.save();
     let sync = { synced: false, reason: "RESULTS_NOT_RELEASED" };
-    if (!pendingManual && exam.showResultsImmediately) sync = await syncFormalExamScore({ exam, student, submission });
+    if (!pendingManual) sync = await syncFormalExamScore({ exam, student, submission });
     return res.json({ message: "Examination submitted successfully.", submission: safeSubmission(submission), sync });
   } catch (error) { return res.status(500).json({ message: error.message || "Failed to submit examination." }); }
 };
@@ -288,7 +288,7 @@ export const gradeExamSubmission = async (req, res) => {
     submission.gradingStatus = "graded";
     submission.status = "graded";
     await submission.save();
-    const sync = exam.showResultsImmediately ? await syncFormalExamScore({ exam, student: submission.student, submission }) : { synced: false, reason: "RESULTS_NOT_RELEASED" };
+    const sync = await syncFormalExamScore({ exam, student: submission.student, submission });
     return res.json({ message: "Examination submission graded.", submission: safeSubmission(submission), sync });
   } catch (error) { return res.status(500).json({ message: error.message || "Failed to grade examination." }); }
 };
