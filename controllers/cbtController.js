@@ -83,12 +83,14 @@ export const startCbtAttempt = async (req, res) => {
     });
 
     if (submission && submission.status !== "in_progress") {
-      return res.status(409).json({
-        message: "You have already submitted this CBT.",
+      return res.status(200).json({
+        alreadySubmitted: true,
         submission: {
           status: submission.status,
           score: assignment.showResultsImmediately ? submission.score : null,
+          autoScore: assignment.showResultsImmediately ? submission.autoScore : null,
           gradingStatus: submission.gradingStatus,
+          submittedAt: submission.submittedAt,
         },
       });
     }
