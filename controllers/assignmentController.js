@@ -4,7 +4,6 @@ import SchoolClass from "../models/SchoolClass.js";
 import AcademicTerm from "../models/AcademicTerm.js";
 import Student from "../models/Student.js";
 import AssignmentSubmission from "../models/AssignmentSubmission.js";
-import { syncCbtExamScoreToResult } from "../utils/cbtResultSync.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -385,7 +384,7 @@ export const getStudentAssignments = async (req, res) => {
       return {
         ...assignment.toObject(),
         questions: assignment.assessmentMode === "cbt"
-          ? assignment.questions.map(({ correctAnswer, acceptedAnswers, ...question }) => question)
+          ? assignment.questions.map(({ correctAnswer, acceptedAnswers, explanation, ...question }) => question)
           : assignment.questions,
 
         submission: submission
@@ -515,7 +514,7 @@ export const getStudentAssignmentSubmission = async (req, res) => {
     }
     if (safeAssignment.assessmentMode === "cbt") {
       safeAssignment.questions = (safeAssignment.questions || []).map(
-        ({ correctAnswer, acceptedAnswers, ...question }) => question
+        ({ correctAnswer, acceptedAnswers, explanation, ...question }) => question
       );
     }
 
@@ -892,22 +891,6 @@ export const gradeAssignmentSubmission = async (req, res) => {
     submission.status = "graded";
 
     await submission.save();
-
-    if (assignment.assessmentMode === "cbt") {
-      const studentRecord = await Student.findById(submission.student);
-      if (studentRecord) {
-        try {
-          await syncCbtExamScoreToResult({
-            assignment,
-            student: studentRecord,
-            scorePercent: numericScore,
-            source: "manual",
-          });
-        } catch (syncError) {
-          console.error("CBT score override saved, but result synchronization failed:", syncError);
-        }
-      }
-    }
 
     const populatedSubmission =
       await AssignmentSubmission.findById(submission._id)

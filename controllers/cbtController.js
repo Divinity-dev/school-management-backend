@@ -1,7 +1,6 @@
 import Assignment from "../models/Assignment.js";
 import AssignmentSubmission from "../models/AssignmentSubmission.js";
 import Student from "../models/Student.js";
-import { syncCbtExamScoreToResult } from "../utils/cbtResultSync.js";
 
 const normalize = (value) =>
   String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -210,19 +209,6 @@ export const submitCbtAttempt = async (req, res) => {
     );
     await submission.save();
 
-    if (!hasManualQuestions) {
-      try {
-        await syncCbtExamScoreToResult({
-          assignment,
-          student,
-          scorePercent: autoScore,
-          source: "cbt",
-        });
-      } catch (syncError) {
-        console.error("CBT score saved, but result synchronization failed:", syncError);
-      }
-    }
-
     return res.status(200).json({
       message: hasManualQuestions
         ? "CBT submitted. Objective questions have been marked; written answers are awaiting teacher review."
@@ -282,5 +268,79 @@ export const saveCbtAnswers = async (req, res) => {
   } catch (error) {
     console.error("Save CBT answers error:", error);
     return res.status(500).json({ message: "Failed to save CBT answers." });
+  }
+};
+
+
+// Students can review their own submitted CBT answers only after the teacher
+// has enabled immediate result release. Correct answers and explanations are
+// never included in the live exam payload.
+export const getCbtReview = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({ message: "Only students can review their CBT." });
+    }
+    const student = await Student.findOne({ user: req.user._id, isActive: true });
+    if (!student) return res.status(404).json({ message: "Student record not found." });
+    const assignment = await Assignment.findOne({
+      _id: req.params.assignmentId,
+      school: student.school,
+      schoolClass: student.schoolClass,
+      academicSession: student.academicSession,
+      status: { $in: ["published", "closed"] },
+      assessmentMode: "cbt",
+    });
+    if (!assignment) return res.status(404).json({ message: "CBT not found for your class." });
+
+    const submission = await AssignmentSubmission.findOne({
+      assignment: assignment._id,
+      student: student._id,
+      school: student.school,
+    });
+    if (!submission || submission.status === "in_progress") {
+      return res.status(409).json({ message: "Submit the examination before reviewing it." });
+    }
+    if (!assignment.showResultsImmediately) {
+      return res.status(403).json({ message: "Your teacher has not released the answer review yet." });
+    }
+
+    const answerMap = new Map((submission.answers || []).map((item) => [String(item.questionId), item.answer || ""]));
+    const review = assignment.questions.map((question, index) => {
+      const studentAnswer = answerMap.get(String(question._id)) || "";
+      const accepted = [question.correctAnswer, ...(question.acceptedAnswers || [])]
+        .filter(Boolean)
+        .map(normalize);
+      const isCorrect = question.type === "essay"
+        ? null
+        : accepted.includes(normalize(studentAnswer));
+      return {
+        questionId: question._id,
+        number: index + 1,
+        question: question.question,
+        type: question.type,
+        options: question.options,
+        marks: question.marks,
+        studentAnswer,
+        correctAnswer: question.type === "essay" ? null : question.correctAnswer,
+        isCorrect,
+        explanation: question.explanation || "",
+      };
+    });
+
+    return res.status(200).json({
+      assignment: { _id: assignment._id, title: assignment.title },
+      result: {
+        score: submission.score,
+        autoScore: submission.autoScore,
+        maxScore: submission.maxScore,
+        gradingStatus: submission.gradingStatus,
+        submittedAt: submission.submittedAt,
+        feedback: submission.feedback,
+      },
+      review,
+    });
+  } catch (error) {
+    console.error("Get CBT review error:", error);
+    return res.status(500).json({ message: "Failed to load CBT answer review." });
   }
 };
