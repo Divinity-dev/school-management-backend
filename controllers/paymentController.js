@@ -6,13 +6,14 @@ import Subscription from "../models/Subscription.js";
 import StudentFeeAccount from "../models/StudentFeeAccount.js";
 import AcademicSession from "../models/AcademicSession.js";
 import AcademicTerm from "../models/AcademicTerm.js";
+import School from "../models/School.js";
 
 import {
   initializeTransaction,
   verifyTransaction,
 } from "../utils/paystack.js";
 
-const PRICE_PER_STUDENT = 1000;
+const DEFAULT_PRICE_PER_STUDENT = 1500;
 
 /*
 |--------------------------------------------------------------------------
@@ -310,8 +311,7 @@ export const processSuccessfulSubscriptionPayment =
           */
 
           const expectedAmount =
-            studentLimit *
-            PRICE_PER_STUDENT;
+            studentLimit * Number(payment.metadata?.pricePerStudent ?? DEFAULT_PRICE_PER_STUDENT);
 
           if (
             Number(payment.amount) !==
@@ -566,8 +566,7 @@ export const processSuccessfulSubscriptionPayment =
           }
 
           const expectedAmount =
-            additionalSeats *
-            PRICE_PER_STUDENT;
+            additionalSeats * Number(payment.metadata?.pricePerStudent ?? DEFAULT_PRICE_PER_STUDENT);
 
           if (
             Number(payment.amount) !==
@@ -1222,9 +1221,9 @@ export const initializeSubscriptionPayment =
         });
       }
 
-      const amount =
-        seats *
-        PRICE_PER_STUDENT;
+      const school = await School.findById(schoolId).select("subscriptionPricing");
+      const pricePerStudent = Number(school?.subscriptionPricing?.pricePerStudent ?? DEFAULT_PRICE_PER_STUDENT);
+      const amount = seats * pricePerStudent;
 
       const email =
         req.user?.email;
@@ -1287,8 +1286,7 @@ export const initializeSubscriptionPayment =
             studentLimit:
               seats,
 
-            pricePerStudent:
-              PRICE_PER_STUDENT,
+            pricePerStudent,
 
             requestedAmount:
               amount,

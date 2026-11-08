@@ -5,13 +5,19 @@ import Subscription from "../models/Subscription.js";
 import Payment from "../models/Payment.js";
 import Student from "../models/Student.js";
 import AcademicTerm from "../models/AcademicTerm.js";
+import School from "../models/School.js";
 
 import {
   initializeTransaction,
   verifyTransaction,
 } from "../utils/paystack.js";
 
-const PRICE_PER_STUDENT = 1000;
+const DEFAULT_PRICE_PER_STUDENT = 1500;
+
+const getSchoolPrice = async (schoolId) => {
+  const school = await School.findById(schoolId).select("subscriptionPricing");
+  return Number(school?.subscriptionPricing?.pricePerStudent ?? DEFAULT_PRICE_PER_STUDENT);
+};
 
 const getSchoolId = (req) => {
   return (
@@ -37,11 +43,15 @@ const generatePaymentReference = (prefix) => {
 // --------------------------------------------------
 export const getSubscriptionPricing = async (req, res) => {
   try {
+    const schoolId = getSchoolId(req);
+    const pricePerStudent = await getSchoolPrice(schoolId);
+    const school = await School.findById(schoolId).select("subscriptionPricing");
     return res.status(200).json({
       message: "Subscription pricing retrieved successfully.",
       pricing: {
         billingCycle: "termly",
-        pricePerStudent: PRICE_PER_STUDENT,
+        pricePerStudent,
+        isCustom: Boolean(school?.subscriptionPricing?.isCustom),
         currency: "NGN",
         currencySymbol: "₦",
         minimumStudentSeats: 1,
@@ -292,8 +302,8 @@ export const initializeSubscriptionPayment = async (
     // --------------------------------------------------
     // Calculate amount on backend
     // --------------------------------------------------
-    const amountInNaira =
-      seats * PRICE_PER_STUDENT;
+    const pricePerStudent = await getSchoolPrice(schoolId);
+      const amountInNaira = seats * pricePerStudent;
 
     const amountInKobo =
       Math.round(amountInNaira * 100);
@@ -339,8 +349,7 @@ export const initializeSubscriptionPayment = async (
 
           studentLimit: seats,
 
-          pricePerStudent:
-            PRICE_PER_STUDENT,
+          pricePerStudent,
 
           amountInNaira,
         },
@@ -1343,8 +1352,8 @@ export const initializeAdditionalSeatsPayment =
         });
       }
 
-      const amountInNaira =
-        seats * PRICE_PER_STUDENT;
+      const pricePerStudent = await getSchoolPrice(schoolId);
+      const amountInNaira = seats * pricePerStudent;
 
       const amountInKobo =
         Math.round(
@@ -1400,8 +1409,7 @@ export const initializeAdditionalSeatsPayment =
             previousStudentLimit:
               subscription.studentLimit,
 
-            pricePerStudent:
-              PRICE_PER_STUDENT,
+            pricePerStudent,
 
             amountInNaira,
           },

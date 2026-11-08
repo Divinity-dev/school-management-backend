@@ -1,5 +1,20 @@
 import mongoose from "mongoose";
 
+const questionOptionSchema = new mongoose.Schema({
+  text: { type: String, required: true, trim: true, maxlength: 1000 },
+  value: { type: String, required: true, trim: true },
+}, { _id: false });
+
+const assessmentQuestionSchema = new mongoose.Schema({
+  question: { type: String, required: true, trim: true, maxlength: 5000 },
+  type: { type: String, enum: ["multiple_choice", "true_false", "short_answer", "essay"], required: true },
+  options: { type: [questionOptionSchema], default: [] },
+  correctAnswer: { type: String, trim: true, default: "" },
+  acceptedAnswers: { type: [String], default: [] },
+  marks: { type: Number, required: true, min: 0.01, default: 1 },
+  order: { type: Number, default: 0 },
+}, { _id: true });
+
 const assignmentSchema = new mongoose.Schema(
   {
     school: {
@@ -81,6 +96,27 @@ const assignmentSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+
+    assessmentMode: {
+      type: String,
+      enum: ["written", "cbt"],
+      default: "written",
+    },
+
+    durationMinutes: {
+      type: Number,
+      min: 1,
+      max: 300,
+      default: null,
+    },
+
+    questions: {
+      type: [assessmentQuestionSchema],
+      default: [],
+    },
+
+    shuffleQuestions: { type: Boolean, default: false },
+    showResultsImmediately: { type: Boolean, default: false },
 
     status: {
       type: String,

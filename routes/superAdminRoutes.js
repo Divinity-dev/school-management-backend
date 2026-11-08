@@ -7,6 +7,8 @@ import {
 
 import {
   getDashboardStats,
+  getSchoolSubscriptionPricing,
+  updateSchoolSubscriptionPricing,
 } from "../controllers/superAdminController.js";
 
 const router = express.Router();
@@ -22,6 +24,20 @@ router.get(
   protect,
   authorize("superAdmin"),
   getDashboardStats
+);
+
+router.get(
+  "/subscription-pricing",
+  protect,
+  authorize("superAdmin"),
+  getSchoolSubscriptionPricing
+);
+
+router.patch(
+  "/schools/:schoolId/subscription-pricing",
+  protect,
+  authorize("superAdmin"),
+  updateSchoolSubscriptionPricing
 );
 
 export default router;

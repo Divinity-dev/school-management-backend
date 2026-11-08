@@ -4,6 +4,7 @@ import SchoolClass from "../models/SchoolClass.js";
 import AcademicTerm from "../models/AcademicTerm.js";
 import Student from "../models/Student.js";
 import AssignmentSubmission from "../models/AssignmentSubmission.js";
+import { syncCbtExamScoreToResult } from "../utils/cbtResultSync.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -51,6 +52,11 @@ export const createAssignment = async (req, res) => {
       dueDate,
       attachmentUrl,
       attachmentName,
+      assessmentMode = "written",
+      durationMinutes,
+      questions = [],
+      shuffleQuestions = false,
+      showResultsImmediately = false,
     } = req.body;
 
     if (!subjectAssignmentId || !term || !title || !dueDate) {
@@ -184,6 +190,33 @@ export const createAssignment = async (req, res) => {
       });
     }
 
+    if (!["written", "cbt"].includes(assessmentMode)) {
+      return res.status(400).json({ message: "Invalid assessment mode." });
+    }
+
+    if (assessmentMode === "cbt") {
+      if (!Number.isInteger(Number(durationMinutes)) || Number(durationMinutes) < 1 || Number(durationMinutes) > 300) {
+        return res.status(400).json({ message: "CBT duration must be between 1 and 300 minutes." });
+      }
+      if (!Array.isArray(questions) || questions.length < 1) {
+        return res.status(400).json({ message: "Add at least one CBT question." });
+      }
+      const invalidQuestion = questions.find((question) => {
+        const marks = Number(question.marks);
+        if (!question.question?.trim() || !Number.isFinite(marks) || marks <= 0) return true;
+        if (!["multiple_choice", "true_false", "short_answer", "essay"].includes(question.type)) return true;
+        if (["multiple_choice", "true_false"].includes(question.type)) {
+          if (!Array.isArray(question.options) || question.options.length < 2) return true;
+          if (!question.options.some((option) => option.value === question.correctAnswer)) return true;
+        }
+        if (question.type === "short_answer" && !question.correctAnswer?.trim()) return true;
+        return false;
+      });
+      if (invalidQuestion) {
+        return res.status(400).json({ message: "Check every question, its options, correct answer and marks." });
+      }
+    }
+
     const dueDateValue = new Date(dueDate);
 
     if (Number.isNaN(dueDateValue.getTime())) {
@@ -206,6 +239,11 @@ export const createAssignment = async (req, res) => {
       dueDate: dueDateValue,
       attachmentUrl,
       attachmentName,
+      assessmentMode,
+      durationMinutes: assessmentMode === "cbt" ? Number(durationMinutes) : null,
+      questions: assessmentMode === "cbt" ? questions : [],
+      shuffleQuestions: Boolean(shuffleQuestions),
+      showResultsImmediately: Boolean(showResultsImmediately),
       status: "draft",
     });
 
@@ -346,12 +384,15 @@ export const getStudentAssignments = async (req, res) => {
 
       return {
         ...assignment.toObject(),
+        questions: assignment.assessmentMode === "cbt"
+          ? assignment.questions.map(({ correctAnswer, acceptedAnswers, ...question }) => question)
+          : assignment.questions,
 
         submission: submission
           ? {
               _id: submission._id,
               submittedAt: submission.submittedAt,
-              score: submission.score,
+              score: assignment.assessmentMode === "cbt" && !assignment.showResultsImmediately ? null : submission.score,
               feedback: submission.feedback,
               status: submission.status,
               attachments: submission.attachments,
@@ -467,8 +508,19 @@ export const getStudentAssignmentSubmission = async (req, res) => {
       });
     }
 
+    const safeAssignment = assignment.toObject();
+    if (safeAssignment.assessmentMode === "cbt" && !safeAssignment.showResultsImmediately) {
+      submission.score = null;
+      submission.autoScore = null;
+    }
+    if (safeAssignment.assessmentMode === "cbt") {
+      safeAssignment.questions = (safeAssignment.questions || []).map(
+        ({ correctAnswer, acceptedAnswers, ...question }) => question
+      );
+    }
+
     return res.status(200).json({
-      assignment,
+      assignment: safeAssignment,
       submission,
     });
   } catch (error) {
@@ -733,7 +785,7 @@ export const getAssignmentSubmission = async (req, res) => {
       )
       .populate(
         "assignment",
-        "title description instructions dueDate status"
+        "title description instructions dueDate status assessmentMode questions"
       );
 
     if (!submission) {
@@ -819,6 +871,7 @@ export const gradeAssignmentSubmission = async (req, res) => {
     }
 
     if (
+      assignment.assessmentMode !== "cbt" &&
       !submission.content?.trim() &&
       (!Array.isArray(submission.attachments) ||
         submission.attachments.length === 0)
@@ -830,11 +883,31 @@ export const gradeAssignmentSubmission = async (req, res) => {
     }
 
     submission.score = numericScore;
+    if (assignment.assessmentMode === "cbt") {
+      submission.manualScore = numericScore;
+      submission.gradingStatus = "manually_overridden";
+    }
     submission.feedback =
       typeof feedback === "string" ? feedback.trim() : "";
     submission.status = "graded";
 
     await submission.save();
+
+    if (assignment.assessmentMode === "cbt") {
+      const studentRecord = await Student.findById(submission.student);
+      if (studentRecord) {
+        try {
+          await syncCbtExamScoreToResult({
+            assignment,
+            student: studentRecord,
+            scorePercent: numericScore,
+            source: "manual",
+          });
+        } catch (syncError) {
+          console.error("CBT score override saved, but result synchronization failed:", syncError);
+        }
+      }
+    }
 
     const populatedSubmission =
       await AssignmentSubmission.findById(submission._id)
@@ -844,7 +917,7 @@ export const gradeAssignmentSubmission = async (req, res) => {
         )
         .populate(
           "assignment",
-          "title description instructions dueDate status"
+          "title description instructions dueDate status assessmentMode questions"
         );
 
     return res.status(200).json({
@@ -894,6 +967,10 @@ export const publishAssignment = async (req, res) => {
       return res.status(400).json({
         message: `Assignment cannot be published because it is already ${assignment.status}`,
       });
+    }
+
+    if (assignment.assessmentMode === "cbt" && (!assignment.durationMinutes || !assignment.questions?.length)) {
+      return res.status(400).json({ message: "Add CBT questions and set the exam duration before publishing." });
     }
 
     assignment.status = "published";
@@ -1044,6 +1121,11 @@ export const updateAssignment = async (req, res) => {
       dueDate,
       attachmentUrl,
       attachmentName,
+      assessmentMode,
+      durationMinutes,
+      questions,
+      shuffleQuestions,
+      showResultsImmediately,
     } = req.body;
 
     // Validate title
@@ -1127,6 +1209,54 @@ export const updateAssignment = async (req, res) => {
       }
 
       assignment.dueDate = parsedDueDate;
+    }
+
+    if (
+      assignment.status !== "draft" &&
+      (assessmentMode !== undefined || durationMinutes !== undefined || questions !== undefined || shuffleQuestions !== undefined || showResultsImmediately !== undefined)
+    ) {
+      return res.status(400).json({ message: "CBT settings and questions can only be changed while the assignment is a draft." });
+    }
+
+    if (assessmentMode !== undefined) {
+      if (!["written", "cbt"].includes(assessmentMode)) {
+        return res.status(400).json({ message: "Invalid assessment mode." });
+      }
+      assignment.assessmentMode = assessmentMode;
+    }
+
+    if (assignment.assessmentMode === "cbt") {
+      if (durationMinutes !== undefined) {
+        const duration = Number(durationMinutes);
+        if (!Number.isInteger(duration) || duration < 1 || duration > 300) {
+          return res.status(400).json({ message: "CBT duration must be between 1 and 300 minutes." });
+        }
+        assignment.durationMinutes = duration;
+      }
+      if (questions !== undefined) {
+        if (!Array.isArray(questions) || questions.length < 1) {
+          return res.status(400).json({ message: "A CBT must contain at least one question." });
+        }
+        const invalidQuestion = questions.find((question) => {
+          if (!question.question?.trim() || !Number.isFinite(Number(question.marks)) || Number(question.marks) <= 0) return true;
+          if (!["multiple_choice", "true_false", "short_answer", "essay"].includes(question.type)) return true;
+          if (["multiple_choice", "true_false"].includes(question.type)) {
+            return !Array.isArray(question.options) || question.options.length < 2 ||
+              !question.options.some((option) => option.value === question.correctAnswer);
+          }
+          if (question.type === "short_answer") return !question.correctAnswer?.trim();
+          return false;
+        });
+        if (invalidQuestion) {
+          return res.status(400).json({ message: "Check every question, its options, correct answer and marks." });
+        }
+        assignment.questions = questions;
+      }
+      if (shuffleQuestions !== undefined) assignment.shuffleQuestions = Boolean(shuffleQuestions);
+      if (showResultsImmediately !== undefined) assignment.showResultsImmediately = Boolean(showResultsImmediately);
+      if (!assignment.durationMinutes || !assignment.questions?.length) {
+        return res.status(400).json({ message: "CBT duration and questions are required." });
+      }
     }
 
     await assignment.save();
