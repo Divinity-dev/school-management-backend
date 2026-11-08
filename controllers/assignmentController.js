@@ -1213,7 +1213,7 @@ export const updateAssignment = async (req, res) => {
 
     if (
       assignment.status !== "draft" &&
-      (assessmentMode !== undefined || durationMinutes !== undefined || questions !== undefined)
+      (assessmentMode !== undefined || durationMinutes !== undefined || questions !== undefined || shuffleQuestions !== undefined || showResultsImmediately !== undefined)
     ) {
       return res.status(400).json({ message: "CBT settings and questions can only be changed while the assignment is a draft." });
     }
