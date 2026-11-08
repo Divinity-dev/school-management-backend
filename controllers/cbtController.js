@@ -208,3 +208,45 @@ export const submitCbtAttempt = async (req, res) => {
     return res.status(500).json({ message: "Failed to submit CBT." });
   }
 };
+
+
+export const saveCbtAnswers = async (req, res) => {
+  try {
+    if (req.user.role !== "student") {
+      return res.status(403).json({ message: "Only students can save CBT answers." });
+    }
+    const { student, assignment, error } = await getStudentAndAssignment(req);
+    if (error === "STUDENT_NOT_FOUND") {
+      return res.status(404).json({ message: "Student record not found." });
+    }
+    if (error) return res.status(404).json({ message: "CBT not found for your class." });
+
+    const submission = await AssignmentSubmission.findOne({
+      assignment: assignment._id,
+      student: student._id,
+      school: student.school,
+      status: "in_progress",
+    });
+    if (!submission) return res.status(409).json({ message: "No active CBT attempt was found." });
+    if (new Date() >= new Date(submission.expiresAt)) {
+      return res.status(409).json({ message: "The CBT time has expired." });
+    }
+
+    const submittedAnswers = Array.isArray(req.body.answers) ? req.body.answers : [];
+    const validQuestionIds = new Set(assignment.questions.map((question) => String(question._id)));
+    const answers = submittedAnswers
+      .filter((item) => validQuestionIds.has(String(item.questionId)))
+      .map((item) => ({
+        questionId: item.questionId,
+        answer: String(item.answer ?? ""),
+      }));
+
+    submission.answers = answers;
+    await submission.save();
+
+    return res.status(200).json({ message: "Answers saved.", savedCount: answers.length });
+  } catch (error) {
+    console.error("Save CBT answers error:", error);
+    return res.status(500).json({ message: "Failed to save CBT answers." });
+  }
+};
