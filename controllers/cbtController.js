@@ -119,6 +119,7 @@ export const startCbtAttempt = async (req, res) => {
         status: "in_progress",
         startedAt,
         expiresAt,
+        submittedAt: null,
         maxScore,
         questionOrder,
         answers: [],
