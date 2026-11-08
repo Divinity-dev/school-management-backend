@@ -20,6 +20,11 @@ const assignmentSubmissionSchema = new mongoose.Schema(
       required: true,
     },
 
+    questionOrder: {
+      type: [{ type: mongoose.Schema.Types.ObjectId }],
+      default: [],
+    },
+
     answers: {
       type: [{
         questionId: { type: mongoose.Schema.Types.ObjectId, required: true },
