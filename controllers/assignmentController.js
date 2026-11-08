@@ -917,7 +917,7 @@ export const gradeAssignmentSubmission = async (req, res) => {
         )
         .populate(
           "assignment",
-          "title description instructions dueDate status"
+          "title description instructions dueDate status assessmentMode questions"
         );
 
     return res.status(200).json({
