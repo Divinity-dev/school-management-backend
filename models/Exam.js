@@ -12,7 +12,7 @@ const questionSchema = new mongoose.Schema({
   correctAnswer: { type: String, trim: true, default: "" },
   acceptedAnswers: { type: [String], default: [] },
   explanation: { type: String, trim: true, default: "", maxlength: 10000 },
-  marks: { type: Number, required: true, min: 0.01 },
+  marks: { type: Number, required: true, min: 1, validate: Number.isInteger },
   order: { type: Number, default: 0 },
 });
 
@@ -29,7 +29,7 @@ const examSchema = new mongoose.Schema({
   startsAt: { type: Date, required: true },
   endsAt: { type: Date, required: true },
   durationMinutes: { type: Number, required: true, min: 1, max: 300 },
-  totalMarks: { type: Number, required: true, min: 0.01 },
+  totalMarks: { type: Number, required: true, min: 1, validate: Number.isInteger },
   questions: { type: [questionSchema], validate: v => Array.isArray(v) && v.length > 0 },
   shuffleQuestions: { type: Boolean, default: false },
   showResultsImmediately: { type: Boolean, default: false },
