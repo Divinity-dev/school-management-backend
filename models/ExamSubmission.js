@@ -11,7 +11,7 @@ const examSubmissionSchema = new mongoose.Schema({
   submittedAt: { type: Date, default: null },
   timeSpentSeconds: { type: Number, default: null, min: 0 },
   autoScore: { type: Number, default: 0, min: 0 },
-  manualScore: { type: Number, default: null, min: 0 },
+  manualScore: { type: Number, default: null, min: 0, validate: value => value === null || Number.isInteger(value) },
   score: { type: Number, default: null, min: 0 },
   maxScore: { type: Number, required: true, min: 0 },
   percentage: { type: Number, default: null, min: 0, max: 100 },
