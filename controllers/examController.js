@@ -99,7 +99,7 @@ export const createExam = async (req, res) => {
     let totalMarks = 0;
     for (const q of questions) {
       const marks = Number(q.marks);
-      if (!q.question?.trim() || !validTypes.includes(q.type) || !Number.isFinite(marks) || marks <= 0) return res.status(400).json({ message: "Check every question, type and mark value." });
+      if (!q.question?.trim() || !validTypes.includes(q.type) || !Number.isInteger(marks) || marks < 1) return res.status(400).json({ message: "Check every question, type and mark value." });
       if (["multiple_choice", "true_false"].includes(q.type) && (!Array.isArray(q.options) || q.options.length < 2 || !q.options.some(o => o.value === q.correctAnswer))) return res.status(400).json({ message: "Every objective question needs options and a correct answer." });
       if (q.type === "short_answer" && !String(q.correctAnswer || "").trim()) return res.status(400).json({ message: "Short-answer questions need a correct answer." });
       totalMarks += marks;
@@ -288,7 +288,7 @@ export const gradeExamSubmission = async (req, res) => {
     if (!submission || submission.status === "in_progress") return res.status(404).json({ message: "Submitted attempt not found." });
     const manualScore = Number(req.body.manualScore);
     const essayMaximum = exam.questions.filter(q => q.type === "essay").reduce((sum, q) => sum + Number(q.marks), 0);
-    if (!Number.isFinite(manualScore) || manualScore < 0 || manualScore > essayMaximum) return res.status(400).json({ message: `Manual score must be between 0 and ${essayMaximum}.` });
+    if (!Number.isInteger(manualScore) || manualScore < 0 || manualScore > essayMaximum) return res.status(400).json({ message: `Manual score must be between 0 and ${essayMaximum}.` });
     const score = Number((submission.autoScore + manualScore).toFixed(2));
     submission.manualScore = manualScore;
     submission.score = score;
