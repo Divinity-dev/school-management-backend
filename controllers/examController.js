@@ -109,9 +109,9 @@ export const createExam = async (req, res) => {
       schoolClass: assignment.schoolClass, subject: assignment.subject, subjectAssignment: assignment._id,
       createdBy: req.user._id, title: title.trim(), instructions, startsAt: start, endsAt: end,
       durationMinutes: duration, totalMarks, questions, shuffleQuestions: Boolean(shuffleQuestions),
-      showResultsImmediately: Boolean(showResultsImmediately), status: "draft",
+      showResultsImmediately: Boolean(showResultsImmediately), status: "pending_approval",
     });
-    return res.status(201).json({ message: "Examination created successfully.", exam });
+    return res.status(201).json({ message: "Examination submitted to the school administrator for approval.", exam });
   } catch (error) { return res.status(500).json({ message: error.message || "Failed to create examination." }); }
 };
 
@@ -122,6 +122,44 @@ export const getTeacherExams = async (req, res) => {
     const exams = await Exam.find(filter).populate("schoolClass", "name arm").populate("subject", "name code").populate("academicTerm", "name").sort({ createdAt: -1 });
     return res.json({ exams });
   } catch (error) { return res.status(500).json({ message: "Failed to fetch examinations." }); }
+};
+
+export const getAdminExams = async (req, res) => {
+  try {
+    const exams = await Exam.find({ school: req.user.school })
+      .populate("schoolClass", "name arm").populate("subject", "name code")
+      .populate("academicTerm", "name").populate("createdBy", "firstName lastName")
+      .populate("approvedBy", "firstName lastName").sort({ createdAt: -1 });
+    return res.json({ exams });
+  } catch (error) { return res.status(500).json({ message: "Failed to fetch examinations for approval." }); }
+};
+
+export const approveExam = async (req, res) => {
+  try {
+    const exam = await Exam.findOne({ _id: req.params.examId, school: req.user.school });
+    if (!exam) return res.status(404).json({ message: "Examination not found." });
+    if (!["pending_approval", "draft"].includes(exam.status)) return res.status(400).json({ message: "Only examinations awaiting approval can be approved." });
+    exam.status = "published";
+    exam.approvalNote = "";
+    exam.approvedBy = req.user._id;
+    exam.approvedAt = new Date();
+    await exam.save();
+    return res.json({ message: "Examination approved and published for students.", exam });
+  } catch (error) { return res.status(500).json({ message: "Unable to approve examination." }); }
+};
+
+export const rejectExam = async (req, res) => {
+  try {
+    const exam = await Exam.findOne({ _id: req.params.examId, school: req.user.school });
+    if (!exam) return res.status(404).json({ message: "Examination not found." });
+    if (!["pending_approval", "draft"].includes(exam.status)) return res.status(400).json({ message: "Only examinations awaiting approval can be rejected." });
+    exam.status = "rejected";
+    exam.approvalNote = String(req.body.note || "").trim().slice(0, 1000);
+    exam.approvedBy = req.user._id;
+    exam.approvedAt = new Date();
+    await exam.save();
+    return res.json({ message: "Examination returned to the teacher.", exam });
+  } catch (error) { return res.status(500).json({ message: "Unable to reject examination." }); }
 };
 
 export const getStudentExams = async (req, res) => {
@@ -155,8 +193,10 @@ export const getExam = async (req, res) => {
 export const publishExam = async (req, res) => {
   const exam = await Exam.findOne({ _id: req.params.examId, school: req.user.school });
   if (!exam) return res.status(404).json({ message: "Examination not found." });
-  if (!canManage(req.user, exam)) return res.status(403).json({ message: "You cannot publish this examination." });
-  if (exam.status !== "draft") return res.status(400).json({ message: "Only draft examinations can be published." });
+  if (req.user.role !== "schoolAdmin") return res.status(403).json({ message: "Only a school administrator can approve and publish examinations." });
+  if (!["pending_approval", "draft"].includes(exam.status)) return res.status(400).json({ message: "Only examinations awaiting approval can be published." });
+  exam.approvedBy = req.user._id;
+  exam.approvedAt = new Date();
   exam.status = "published"; await exam.save();
   return res.json({ message: "Examination published successfully.", exam });
 };
