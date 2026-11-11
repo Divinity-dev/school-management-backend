@@ -241,7 +241,7 @@ export const generateBankQuestions = async (req, res) => {
 export const importBankQuestions = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "Choose a CSV or Excel question file." });
-    if (!/\\.(csv|xlsx|xls)$/i.test(req.file.originalname || "")) return res.status(400).json({ message: "Question imports must be CSV or Excel files." });
+    if (!/\.(csv|xlsx|xls)$/i.test(req.file.originalname || "")) return res.status(400).json({ message: "Question imports must be CSV or Excel files." });
     const assignment = await getAssignment(req, req.body.subjectAssignmentId);
     const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: "" });
