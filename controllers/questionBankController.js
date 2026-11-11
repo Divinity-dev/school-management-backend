@@ -190,6 +190,7 @@ export const generateBankQuestions = async (req, res) => {
     if (provider === "openai" && !process.env.OPENAI_API_KEY) {
       return res.status(503).json({ message: "OpenAI is selected but OPENAI_API_KEY is missing from the backend environment." });
     }
+
     const assignment = await getAssignment(req, req.body.subjectAssignmentId);
     const material = (req.body.materialText || readMaterial(req.file) || "").trim().slice(0, 40000);
     const topics = Array.isArray(req.body.topics) ? req.body.topics.join(", ") : String(req.body.topics || "").trim();
@@ -197,10 +198,11 @@ export const generateBankQuestions = async (req, res) => {
     const count = Math.min(50, Math.max(1, Math.trunc(Number(req.body.count) || 10)));
     const difficulty = validDifficulties.includes(req.body.difficulty) ? req.body.difficulty : "medium";
     const requestedTypes = (Array.isArray(req.body.types) ? req.body.types : typeof req.body.types === "string" ? [req.body.types] : ["multiple_choice"]).filter(type => validTypes.includes(type));
+    const schemaDescription = '{"questions":[{"question":"string","type":"multiple_choice|true_false|short_answer|essay","options":[{"text":"string","value":"string"}],"correctAnswer":"string","acceptedAnswers":["string"],"explanation":"string","marks":1,"topic":"string","difficulty":"easy|medium|hard"}]}';
     const prompt = [
       "You are an experienced Nigerian school assessment writer.",
       "Create original, age-appropriate assessment questions aligned to the selected subject and class.",
-      "Return valid JSON only with this shape: { \\"questions\\": [{ \\"question\\": string, \\"type\\": \\"multiple_choice\\"|\\"true_false\\"|\\"short_answer\\"|\\"essay\\", \\"options\\": [{\\"text\\":string,\\"value\\":string}], \\"correctAnswer\\":string, \\"acceptedAnswers\\":string[], \\"explanation\\":string, \\"marks\\":integer, \\"topic\\":string, \\"difficulty\\":\\"easy\\"|\\"medium\\"|\\"hard\\" }] }.",
+      "Return valid JSON only using this exact structure: " + schemaDescription,
       "Every marks value must be a positive whole number. Never use decimal marks.",
       "Objective questions must include at least two options and correctAnswer must exactly equal one option value.",
       "For essay questions, options must be empty and correctAnswer may be empty.",
@@ -211,30 +213,24 @@ export const generateBankQuestions = async (req, res) => {
       "Question count: " + count,
       "Preferred difficulty: " + difficulty,
       "Allowed question types: " + (requestedTypes.length ? requestedTypes.join(", ") : "multiple_choice"),
-      "Learning material:\\n" + material,
-    ].join("\\n\\n");
+      "Learning material:\n" + material,
+    ].join("\n\n");
 
     let response;
     if (provider === "gemini") {
       const model = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent", {
         method: "POST",
-        headers: {
-          "x-goog-api-key": process.env.GEMINI_API_KEY,
-          "Content-Type": "application/json",
-        },
+        headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.4,
-            responseMimeType: "application/json",
-          },
+          generationConfig: { temperature: 0.4, responseMimeType: "application/json" },
         }),
       });
     } else {
       response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+        headers: { Authorization: "Bearer " + process.env.OPENAI_API_KEY, "Content-Type": "application/json" },
         body: JSON.stringify({
           model: process.env.OPENAI_QUESTION_MODEL || "gpt-4.1-mini",
           temperature: 0.4,
@@ -249,22 +245,27 @@ export const generateBankQuestions = async (req, res) => {
 
     if (!response.ok) {
       const detail = await response.text();
-      console.error(`AI question generation failed (${provider}):`, response.status, detail.slice(0, 500));
-      return res.status(502).json({ message: `The ${provider === "gemini" ? "Gemini" : "OpenAI"} service could not generate questions right now. Please check its API configuration or try again later.` });
+      console.error("AI question generation failed (" + provider + "):", response.status, detail.slice(0, 500));
+      return res.status(502).json({ message: "The " + (provider === "gemini" ? "Gemini" : "OpenAI") + " service could not generate questions right now. Please check its API configuration or try again later." });
     }
 
     const payload = await response.json();
     const rawContent = provider === "gemini"
-      ? payload.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("\\n")
+      ? payload.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("\n")
       : payload.choices?.[0]?.message?.content;
-    const contentText = String(rawContent || "").replace(/^\`\`\`(?:json)?\\s*/i, "").replace(/\\s*\`\`\`$/, "").trim();
+    let contentText = String(rawContent || "").trim();
+    const fence = String.fromCharCode(96).repeat(3);
+    if (contentText.startsWith(fence)) {
+      contentText = contentText.slice(fence.length).replace(/^json\s*/i, "").trim();
+      if (contentText.endsWith(fence)) contentText = contentText.slice(0, -fence.length).trim();
+    }
     if (!contentText) return res.status(502).json({ message: "The AI provider returned an empty response. Please try again." });
     const parsed = JSON.parse(contentText);
     const generated = (Array.isArray(parsed.questions) ? parsed.questions : []).slice(0, count).map(item => {
       const question = normalizeQuestion(item);
       return { ...question, source: "ai", status: "draft" };
     });
-        if (!generated.length) return res.status(502).json({ message: "The AI did not return usable questions. Please adjust the topic or material and try again." });
+    if (!generated.length) return res.status(502).json({ message: "The AI did not return usable questions. Please adjust the topic or material and try again." });
     return res.json({ questions: generated, count: generated.length, message: "Review every generated question before saving it to your bank." });
   } catch (error) {
     return res.status(400).json({ message: error.message || "Unable to generate questions." });
