@@ -202,7 +202,7 @@ export const createAssignment = async (req, res) => {
       }
       const invalidQuestion = questions.find((question) => {
         const marks = Number(question.marks);
-        if (!question.question?.trim() || !Number.isFinite(marks) || marks <= 0) return true;
+        if (!question.question?.trim() || !Number.isInteger(marks) || marks < 1) return true;
         if (!["multiple_choice", "true_false", "short_answer", "essay"].includes(question.type)) return true;
         if (["multiple_choice", "true_false"].includes(question.type)) {
           if (!Array.isArray(question.options) || question.options.length < 2) return true;
@@ -830,9 +830,9 @@ export const gradeAssignmentSubmission = async (req, res) => {
 
     const numericScore = Number(score);
 
-    if (Number.isNaN(numericScore)) {
+    if (!Number.isInteger(numericScore)) {
       return res.status(400).json({
-        message: "Score must be a valid number",
+        message: "Score must be a whole number.",
       });
     }
 
