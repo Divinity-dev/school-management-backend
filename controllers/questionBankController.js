@@ -224,7 +224,7 @@ export const generateBankQuestions = async (req, res) => {
         headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.4, responseMimeType: "application/json" },
+          generationConfig: { responseMimeType: "application/json" },
         }),
       });
     } else {
