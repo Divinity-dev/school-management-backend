@@ -226,6 +226,8 @@ export const generateBankQuestions = async (req, res) => {
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { responseMimeType: "application/json" },
         }),
+        // Prevent a stalled upstream Gemini request from leaving the teacher's UI loading forever.
+        signal: AbortSignal.timeout(30000),
       });
     } else {
       response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -240,6 +242,7 @@ export const generateBankQuestions = async (req, res) => {
             { role: "user", content: prompt },
           ],
         }),
+        signal: AbortSignal.timeout(30000),
       });
     }
 
@@ -268,7 +271,14 @@ export const generateBankQuestions = async (req, res) => {
     if (!generated.length) return res.status(502).json({ message: "The AI did not return usable questions. Please adjust the topic or material and try again." });
     return res.json({ questions: generated, count: generated.length, message: "Review every generated question before saving it to your bank." });
   } catch (error) {
-    return res.status(400).json({ message: error.message || "Unable to generate questions." });
+    if (error.name === "TimeoutError" || error.name === "AbortError") {
+      console.error("AI question generation timed out:", error.message);
+      return res.status(504).json({
+        message: "The AI provider took too long to respond. Please try again shortly; no questions were saved.",
+      });
+    }
+    console.error("AI question generation request failed:", error);
+    return res.status(502).json({ message: error.message || "Unable to generate questions right now." });
   }
 };
 
