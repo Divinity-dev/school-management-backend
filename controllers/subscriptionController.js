@@ -12,11 +12,17 @@ import {
   verifyTransaction,
 } from "../utils/paystack.js";
 
-const DEFAULT_PRICE_PER_STUDENT = 1500;
+const DEFAULT_PRICE_PER_STUDENT = 1000;
 
 const getSchoolPrice = async (schoolId) => {
   const school = await School.findById(schoolId).select("subscriptionPricing");
-  return Number(school?.subscriptionPricing?.pricePerStudent ?? DEFAULT_PRICE_PER_STUDENT);
+  const pricing = school?.subscriptionPricing;
+
+  // Schools without a negotiated rate always use the current platform default.
+  // This also updates existing schools that still have the previous default stored.
+  if (!pricing?.isCustom) return DEFAULT_PRICE_PER_STUDENT;
+
+  return Number(pricing.pricePerStudent ?? DEFAULT_PRICE_PER_STUDENT);
 };
 
 const getSchoolId = (req) => {
