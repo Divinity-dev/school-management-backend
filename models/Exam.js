@@ -33,7 +33,10 @@ const examSchema = new mongoose.Schema({
   questions: { type: [questionSchema], validate: v => Array.isArray(v) && v.length > 0 },
   shuffleQuestions: { type: Boolean, default: false },
   showResultsImmediately: { type: Boolean, default: false },
-  status: { type: String, enum: ["draft", "published", "closed"], default: "draft", index: true },
+  status: { type: String, enum: ["draft", "pending_approval", "published", "rejected", "closed"], default: "pending_approval", index: true },
+  approvalNote: { type: String, trim: true, default: "", maxlength: 1000 },
+  approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  approvedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 examSchema.index({ school: 1, schoolClass: 1, academicTerm: 1, status: 1 });
