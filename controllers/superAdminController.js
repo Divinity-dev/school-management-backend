@@ -4,6 +4,8 @@ import Student from "../models/Student.js";
 import School from "../models/School.js";
 import Subscription from "../models/Subscription.js";
 
+const DEFAULT_PRICE_PER_STUDENT = 1000;
+
 /*
 |--------------------------------------------------------------------------
 | SUPER ADMIN DASHBOARD
@@ -412,11 +414,13 @@ export const getSchoolSubscriptionPricing = async (req, res) => {
         name: school.name,
         email: school.email,
         pricePerStudent: Number(
-          school.subscriptionPricing?.pricePerStudent ?? 1500
+          school.subscriptionPricing?.isCustom
+            ? school.subscriptionPricing.pricePerStudent ?? DEFAULT_PRICE_PER_STUDENT
+            : DEFAULT_PRICE_PER_STUDENT
         ),
         isCustom: Boolean(school.subscriptionPricing?.isCustom),
       })),
-      defaultPricePerStudent: 1500,
+      defaultPricePerStudent: DEFAULT_PRICE_PER_STUDENT,
       currency: "NGN",
     });
   } catch (error) {
@@ -452,8 +456,8 @@ export const updateSchoolSubscriptionPricing = async (req, res) => {
     }
 
     school.subscriptionPricing = {
-      pricePerStudent: useDefault ? 1500 : Number(pricePerStudent),
-      isCustom: !useDefault && Number(pricePerStudent) !== 1500,
+      pricePerStudent: useDefault ? DEFAULT_PRICE_PER_STUDENT : Number(pricePerStudent),
+      isCustom: !useDefault && Number(pricePerStudent) !== DEFAULT_PRICE_PER_STUDENT,
       updatedAt: new Date(),
       updatedBy: req.user._id,
     };
