@@ -1221,7 +1221,7 @@ export const updateAssignment = async (req, res) => {
           return res.status(400).json({ message: "A CBT must contain at least one question." });
         }
         const invalidQuestion = questions.find((question) => {
-          if (!question.question?.trim() || !Number.isFinite(Number(question.marks)) || Number(question.marks) <= 0) return true;
+          if (!question.question?.trim() || !Number.isInteger(Number(question.marks)) || Number(question.marks) < 1) return true;
           if (!["multiple_choice", "true_false", "short_answer", "essay"].includes(question.type)) return true;
           if (["multiple_choice", "true_false"].includes(question.type)) {
             return !Array.isArray(question.options) || question.options.length < 2 ||
