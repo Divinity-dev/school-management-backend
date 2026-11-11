@@ -12,7 +12,7 @@ const assessmentQuestionSchema = new mongoose.Schema({
   correctAnswer: { type: String, trim: true, default: "" },
   acceptedAnswers: { type: [String], default: [] },
   explanation: { type: String, trim: true, default: "", maxlength: 10000 },
-  marks: { type: Number, required: true, min: 0.01, default: 1 },
+  marks: { type: Number, required: true, min: 1, default: 1, validate: Number.isInteger },
   order: { type: Number, default: 0 },
 }, { _id: true });
 
