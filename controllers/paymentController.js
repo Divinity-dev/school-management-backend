@@ -13,7 +13,7 @@ import {
   verifyTransaction,
 } from "../utils/paystack.js";
 
-const DEFAULT_PRICE_PER_STUDENT = 1500;
+const DEFAULT_PRICE_PER_STUDENT = 1000;
 
 /*
 |--------------------------------------------------------------------------
@@ -1222,7 +1222,9 @@ export const initializeSubscriptionPayment =
       }
 
       const school = await School.findById(schoolId).select("subscriptionPricing");
-      const pricePerStudent = Number(school?.subscriptionPricing?.pricePerStudent ?? DEFAULT_PRICE_PER_STUDENT);
+      const pricePerStudent = school?.subscriptionPricing?.isCustom
+        ? Number(school.subscriptionPricing.pricePerStudent ?? DEFAULT_PRICE_PER_STUDENT)
+        : DEFAULT_PRICE_PER_STUDENT;
       const amount = seats * pricePerStudent;
 
       const email =
