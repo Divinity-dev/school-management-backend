@@ -13,7 +13,8 @@ import {
 } from "../controllers/questionBankController.js";
 
 const router = express.Router();
-router.use(protect, requireActiveSubscription);
+router.use(protect);
+router.use((req, res, next) => req.user.role === "superAdmin" ? next() : requireActiveSubscription(req, res, next));
 router.get("/", authorize("teacher", "schoolAdmin", "superAdmin"), listQuestionBank);
 router.post("/", authorize("teacher", "schoolAdmin", "superAdmin"), createBankQuestion);
 router.post("/generate", authorize("teacher", "schoolAdmin", "superAdmin"), uploadQuestionMaterial, generateBankQuestions);
