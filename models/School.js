@@ -621,7 +621,7 @@ const schoolSchema = new mongoose.Schema(
     subscriptionPricing: {
       pricePerStudent: {
         type: Number,
-        default: 1500,
+        default: 1000,
         min: 0,
       },
       isCustom: {
