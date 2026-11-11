@@ -7,9 +7,11 @@ const optionSchema = new mongoose.Schema({
 
 const questionBankQuestionSchema = new mongoose.Schema({
   school: { type: mongoose.Schema.Types.ObjectId, ref: "School", default: null, index: true },
-  subject: { type: mongoose.Schema.Types.ObjectId, ref: "Subject", required: true, index: true },
-  schoolClass: { type: mongoose.Schema.Types.ObjectId, ref: "SchoolClass", required: true, index: true },
-  subjectAssignment: { type: mongoose.Schema.Types.ObjectId, ref: "SubjectAssignment", required: true },
+  subject: { type: mongoose.Schema.Types.ObjectId, ref: "Subject", default: null, index: true },
+  subjectName: { type: String, required: true, trim: true, maxlength: 120, index: true },
+  schoolClass: { type: mongoose.Schema.Types.ObjectId, ref: "SchoolClass", default: null, index: true },
+  className: { type: String, required: true, trim: true, maxlength: 120, index: true },
+  subjectAssignment: { type: mongoose.Schema.Types.ObjectId, ref: "SubjectAssignment", default: null },
   topic: { type: String, required: true, trim: true, maxlength: 200, index: true },
   question: { type: String, required: true, trim: true, maxlength: 5000 },
   type: { type: String, enum: ["multiple_choice", "true_false", "short_answer", "essay"], required: true },
