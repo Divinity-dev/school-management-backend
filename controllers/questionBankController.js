@@ -189,7 +189,7 @@ export const generateBankQuestions = async (req, res) => {
     if (!topics && !material) return res.status(400).json({ message: "Provide at least one topic or upload/paste learning material." });
     const count = Math.min(50, Math.max(1, Math.trunc(Number(req.body.count) || 10)));
     const difficulty = validDifficulties.includes(req.body.difficulty) ? req.body.difficulty : "medium";
-    const requestedTypes = Array.isArray(req.body.types) ? req.body.types.filter(type => validTypes.includes(type)) : ["multiple_choice"];
+    const requestedTypes = (Array.isArray(req.body.types) ? req.body.types : typeof req.body.types === "string" ? [req.body.types] : ["multiple_choice"]).filter(type => validTypes.includes(type));
     const prompt = [
       "You are an experienced Nigerian school assessment writer.",
       "Create original, age-appropriate assessment questions aligned to the selected subject and class.",
@@ -241,6 +241,7 @@ export const generateBankQuestions = async (req, res) => {
 export const importBankQuestions = async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "Choose a CSV or Excel question file." });
+    if (!/\\.(csv|xlsx|xls)$/i.test(req.file.originalname || "")) return res.status(400).json({ message: "Question imports must be CSV or Excel files." });
     const assignment = await getAssignment(req, req.body.subjectAssignmentId);
     const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: "" });
