@@ -80,20 +80,30 @@ export const uploadQuestionImport = upload.single("file");
 
 export const listQuestionBank = async (req, res) => {
   try {
-    const filter = {
-      status: "approved",
-      $or: [
+    const filter = { status: "approved" };
+    if (req.query.subjectAssignmentId) {
+      const assignment = await getAssignment(req, req.query.subjectAssignmentId);
+      const subjectName = String(assignment.subject?.name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const className = String(assignment.schoolClass?.name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filter.$or = [
+        { school: req.user.school, visibility: "school", subjectAssignment: assignment._id },
+        { school: null, visibility: "shared", subjectName: new RegExp("^" + subjectName + "$", "i"), className: new RegExp("^" + className + "$", "i") },
+      ];
+    } else {
+      filter.$or = [
         { school: req.user.school, visibility: "school" },
         { school: null, visibility: "shared" },
-      ],
-    };
+      ];
+    }
     if (req.query.subject) filter.subject = req.query.subject;
     if (req.query.schoolClass) filter.schoolClass = req.query.schoolClass;
-    if (req.query.subjectAssignmentId) filter.subjectAssignment = req.query.subjectAssignmentId;
     if (req.query.topic) filter.topic = new RegExp(String(req.query.topic).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
     if (req.query.difficulty) filter.difficulty = req.query.difficulty;
     if (req.query.type) filter.type = req.query.type;
-    if (req.query.search) filter.$text = { $search: String(req.query.search).slice(0, 100) };
+    if (req.query.search) {
+      const term = String(req.query.search).slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filter.$and = [{ $or: [{ question: new RegExp(term, "i") }, { topic: new RegExp(term, "i") }] }];
+    }
     const questions = await QuestionBankQuestion.find(filter)
       .populate("subject", "name code")
       .populate("schoolClass", "name arm")
@@ -102,21 +112,34 @@ export const listQuestionBank = async (req, res) => {
       .limit(300);
     return res.json({ questions });
   } catch (error) {
-    return res.status(500).json({ message: "Unable to load the question bank." });
+    return res.status(400).json({ message: error.message || "Unable to load the question bank." });
   }
 };
 
 export const createBankQuestion = async (req, res) => {
   try {
-    const assignment = await getAssignment(req, req.body.subjectAssignmentId);
     const question = normalizeQuestion(req.body);
+    if (req.user.role === "superAdmin" && req.body.visibility === "shared") {
+      const subjectName = String(req.body.subjectName || "").trim();
+      const className = String(req.body.className || "").trim();
+      if (!subjectName || !className) return res.status(400).json({ message: "Shared questions need a subject name and class name." });
+      const saved = await QuestionBankQuestion.create({
+        ...question, school: null, subject: null, schoolClass: null, subjectAssignment: null,
+        subjectName, className, visibility: "shared", source: req.body.source === "ai" ? "ai" : "manual",
+        createdBy: req.user._id, status: "approved",
+      });
+      return res.status(201).json({ message: "Question published to the shared SchoolPilot bank.", question: saved });
+    }
+    const assignment = await getAssignment(req, req.body.subjectAssignmentId);
     const saved = await QuestionBankQuestion.create({
       ...question,
-      school: req.user.role === "superAdmin" && req.body.visibility === "shared" ? null : assignment.school,
+      school: assignment.school,
       subject: assignment.subject._id || assignment.subject,
+      subjectName: assignment.subject?.name || "Subject",
       schoolClass: assignment.schoolClass._id || assignment.schoolClass,
+      className: assignment.schoolClass?.name || "Class",
       subjectAssignment: assignment._id,
-      visibility: req.user.role === "superAdmin" && req.body.visibility === "shared" ? "shared" : "school",
+      visibility: "school",
       source: ["manual", "ai", "import"].includes(req.body.source) ? req.body.source : "manual",
       createdBy: req.user._id,
       status: "approved",
@@ -241,7 +264,9 @@ export const importBankQuestions = async (req, res) => {
         });
         documents.push({
           ...normalized, school: assignment.school, subject: assignment.subject._id || assignment.subject,
-          schoolClass: assignment.schoolClass._id || assignment.schoolClass, subjectAssignment: assignment._id,
+          subjectName: assignment.subject?.name || "Subject",
+          schoolClass: assignment.schoolClass._id || assignment.schoolClass,
+          className: assignment.schoolClass?.name || "Class", subjectAssignment: assignment._id,
           createdBy: req.user._id, source: "import", visibility: "school", status: "approved",
         });
       } catch (error) {
