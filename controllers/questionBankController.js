@@ -80,6 +80,29 @@ export const uploadQuestionImport = upload.single("file");
 
 export const listQuestionBank = async (req, res) => {
   try {
+    // The bank is shared by every teacher in the same school. Browsing must
+    // never depend on the requesting teacher's own subject assignments.
+    const filter = { status: "approved" };
+    if (req.user.role === "superAdmin") {
+      filter.$or = [
+        { school: { $ne: null } },
+        { school: null, visibility: "shared" },
+      ];
+    } else {
+      if (!req.user.school) {
+        return res.status(403).json({ message: "Your account is not associated with a school." });
+      }
+      filter.$or = [
+        { school: req.user.school },
+        { school: null, visibility: "shared" },
+      ];
+    }
+
+    // Class and subject are optional search filters, not access restrictions.
+    if (req.query.subject) filter.subject = req.query.subject;
+    if (req.query.schoolClass) filter.schoolClass = req.query.schoolClass;
+    if (req.query.topic) filter.topic = new RegExp(String(req.query.topic).replace(/[.*+?^$\{\}()|[\]\\\\]/g, "\\\\export const listQuestionBank = async (req, res) => {
+  try {
     const filter = { status: "approved" };
     if (req.query.subjectAssignmentId) {
       const assignment = await getAssignment(req, req.query.subjectAssignmentId);
@@ -119,6 +142,79 @@ export const listQuestionBank = async (req, res) => {
       const term = String(req.query.search).slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       filter.$and = [{ $or: [{ question: new RegExp(term, "i") }, { topic: new RegExp(term, "i") }] }];
     }
+    const questions = await QuestionBankQuestion.find(filter)
+      .populate("subject", "name code")
+      .populate("schoolClass", "name arm")
+      .populate("createdBy", "firstName lastName")
+      .sort({ updatedAt: -1 })
+      .limit(300);
+    return res.json({ questions });
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "Unable to load the question bank." });
+  }
+};
+
+"), "i");
+    if (req.query.difficulty) filter.difficulty = req.query.difficulty;
+    if (req.query.type) filter.type = req.query.type;
+    if (req.query.search) {
+      const term = String(req.query.search).slice(0, 100).replace(/[.*+?^$\{\}()|[\]\\\\]/g, "\\\\export const listQuestionBank = async (req, res) => {
+  try {
+    const filter = { status: "approved" };
+    if (req.query.subjectAssignmentId) {
+      const assignment = await getAssignment(req, req.query.subjectAssignmentId);
+      const subjectName = String(assignment.subject?.name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const className = String(assignment.schoolClass?.name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // A question belongs to a school-wide class + subject collection, not to
+      // the individual teacher assignment that happened to create it.
+      filter.$or = [
+        {
+          // Keep every result inside the authenticated teacher's school.
+          // Accept legacy records whose visibility field predates the
+          // school-wide bank rollout (missing fields match null in MongoDB).
+          school: assignment.school,
+          visibility: { $in: ["school", null] },
+          subject: assignment.subject?._id || assignment.subject,
+          schoolClass: assignment.schoolClass?._id || assignment.schoolClass,
+        },
+        {
+          school: null,
+          visibility: "shared",
+          subjectName: new RegExp("^" + subjectName + "$", "i"),
+          className: new RegExp("^" + className + "$", "i"),
+        },
+      ];
+    } else {
+      filter.$or = [
+        { school: req.user.school, visibility: "school" },
+        { school: null, visibility: "shared" },
+      ];
+    }
+    if (req.query.subject) filter.subject = req.query.subject;
+    if (req.query.schoolClass) filter.schoolClass = req.query.schoolClass;
+    if (req.query.topic) filter.topic = new RegExp(String(req.query.topic).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    if (req.query.difficulty) filter.difficulty = req.query.difficulty;
+    if (req.query.type) filter.type = req.query.type;
+    if (req.query.search) {
+      const term = String(req.query.search).slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      filter.$and = [{ $or: [{ question: new RegExp(term, "i") }, { topic: new RegExp(term, "i") }] }];
+    }
+    const questions = await QuestionBankQuestion.find(filter)
+      .populate("subject", "name code")
+      .populate("schoolClass", "name arm")
+      .populate("createdBy", "firstName lastName")
+      .sort({ updatedAt: -1 })
+      .limit(300);
+    return res.json({ questions });
+  } catch (error) {
+    return res.status(400).json({ message: error.message || "Unable to load the question bank." });
+  }
+};
+
+");
+      filter.$and = [{ $or: [{ question: new RegExp(term, "i") }, { topic: new RegExp(term, "i") }] }];
+    }
+
     const questions = await QuestionBankQuestion.find(filter)
       .populate("subject", "name code")
       .populate("schoolClass", "name arm")
