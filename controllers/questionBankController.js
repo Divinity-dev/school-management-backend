@@ -85,9 +85,21 @@ export const listQuestionBank = async (req, res) => {
       const assignment = await getAssignment(req, req.query.subjectAssignmentId);
       const subjectName = String(assignment.subject?.name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const className = String(assignment.schoolClass?.name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // A question belongs to a school-wide class + subject collection, not to
+      // the individual teacher assignment that happened to create it.
       filter.$or = [
-        { school: req.user.school, visibility: "school", subjectAssignment: assignment._id },
-        { school: null, visibility: "shared", subjectName: new RegExp("^" + subjectName + "$", "i"), className: new RegExp("^" + className + "$", "i") },
+        {
+          school: req.user.school,
+          visibility: "school",
+          subject: assignment.subject?._id || assignment.subject,
+          schoolClass: assignment.schoolClass?._id || assignment.schoolClass,
+        },
+        {
+          school: null,
+          visibility: "shared",
+          subjectName: new RegExp("^" + subjectName + "$", "i"),
+          className: new RegExp("^" + className + "$", "i"),
+        },
       ];
     } else {
       filter.$or = [
