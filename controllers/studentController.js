@@ -267,27 +267,33 @@ export const createStudentPortalAccount = async (req, res) => {
       });
     }
 
-    const normalizedEmail =
-      typeof email === "string" && email.trim()
-        ? email.trim().toLowerCase()
-        : undefined;
+    const loginIdentifier = String(email || "").trim().toLowerCase();
+    let normalizedEmail;
+    let username;
 
-    if (normalizedEmail) {
-      const existingUser = await User.findOne({
-        email: normalizedEmail,
-      });
-
-      if (existingUser) {
-        return res.status(409).json({
-          message: "This email address is already registered",
+    if (loginIdentifier.includes("@")) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginIdentifier)) {
+        return res.status(400).json({ message: "Enter a valid email address or username." });
+      }
+      normalizedEmail = loginIdentifier;
+      const existingEmail = await User.findOne({ email: normalizedEmail });
+      if (existingEmail) {
+        return res.status(409).json({ message: "This email address is already registered" });
+      }
+    } else if (loginIdentifier) {
+      if (!/^[a-z0-9._-]{3,30}$/.test(loginIdentifier)) {
+        return res.status(400).json({
+          message: "Username must be 3–30 characters and contain only letters, numbers, dots, underscores or hyphens.",
         });
+      }
+      username = loginIdentifier;
+      const existingUsername = await User.findOne({ username });
+      if (existingUsername) {
+        return res.status(409).json({ message: "This username is already taken." });
       }
     }
 
-    const username = await generateUsername(
-      student.firstName,
-      student.lastName
-    );
+    username ||= await generateUsername(student.firstName, student.lastName);
 
     const hashedPassword = await bcrypt.hash(password, 12);
 

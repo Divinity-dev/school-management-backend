@@ -44,24 +44,35 @@ export const createParent = async (req, res) => {
       });
     }
 
-    const normalizedEmail = email?.trim().toLowerCase() || undefined;
+    const loginIdentifier = String(email || "").trim().toLowerCase();
+    let normalizedEmail;
+    let username;
 
-    if (normalizedEmail) {
-      const existingEmail = await User.findOne({
-        email: normalizedEmail,
-      });
+    if (loginIdentifier.includes("@")) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginIdentifier)) {
+        return res.status(400).json({ message: "Enter a valid email address or username." });
+      }
 
+      normalizedEmail = loginIdentifier;
+      const existingEmail = await User.findOne({ email: normalizedEmail });
       if (existingEmail) {
-        return res.status(409).json({
-          message: "A user with this email already exists",
+        return res.status(409).json({ message: "A user with this email already exists" });
+      }
+    } else if (loginIdentifier) {
+      if (!/^[a-z0-9._-]{3,30}$/.test(loginIdentifier)) {
+        return res.status(400).json({
+          message: "Username must be 3–30 characters and contain only letters, numbers, dots, underscores or hyphens.",
         });
+      }
+
+      username = loginIdentifier;
+      const existingUsername = await User.findOne({ username });
+      if (existingUsername) {
+        return res.status(409).json({ message: "This username is already taken." });
       }
     }
 
-    const username = await generateUsername(
-      firstName.trim(),
-      lastName.trim()
-    );
+    username ||= await generateUsername(firstName.trim(), lastName.trim());
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
