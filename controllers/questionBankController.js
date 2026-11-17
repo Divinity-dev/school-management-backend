@@ -80,30 +80,34 @@ export const uploadQuestionImport = upload.single("file");
 
 export const listQuestionBank = async (req, res) => {
   try {
+    // Every teacher can browse the complete approved bank for their school.
+    // Class and subject are optional filters, never assignment-based access checks.
     const filter = { status: "approved" };
-    if (req.query.subjectAssignmentId) {
-      const assignment = await getAssignment(req, req.query.subjectAssignmentId);
-      const subjectName = String(assignment.subject?.name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const className = String(assignment.schoolClass?.name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (req.user.role === "superAdmin") {
       filter.$or = [
-        { school: req.user.school, visibility: "school", subjectAssignment: assignment._id },
-        { school: null, visibility: "shared", subjectName: new RegExp("^" + subjectName + "$", "i"), className: new RegExp("^" + className + "$", "i") },
+        { school: { $ne: null } },
+        { school: null, visibility: "shared" },
       ];
     } else {
+      if (!req.user.school) {
+        return res.status(403).json({ message: "Your account is not associated with a school." });
+      }
       filter.$or = [
-        { school: req.user.school, visibility: "school" },
+        { school: req.user.school },
         { school: null, visibility: "shared" },
       ];
     }
+
     if (req.query.subject) filter.subject = req.query.subject;
     if (req.query.schoolClass) filter.schoolClass = req.query.schoolClass;
-    if (req.query.topic) filter.topic = new RegExp(String(req.query.topic).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    if (req.query.topic) filter.topic = new RegExp(String(req.query.topic).replace(/[.*+?^$()|[\]\\]/g, "\\$&"), "i");
     if (req.query.difficulty) filter.difficulty = req.query.difficulty;
     if (req.query.type) filter.type = req.query.type;
     if (req.query.search) {
-      const term = String(req.query.search).slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const term = String(req.query.search).slice(0, 100).replace(/[.*+?^$()|[\]\\]/g, "\\$&");
       filter.$and = [{ $or: [{ question: new RegExp(term, "i") }, { topic: new RegExp(term, "i") }] }];
     }
+
     const questions = await QuestionBankQuestion.find(filter)
       .populate("subject", "name code")
       .populate("schoolClass", "name arm")
