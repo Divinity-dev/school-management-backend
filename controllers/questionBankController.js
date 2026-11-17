@@ -89,8 +89,11 @@ export const listQuestionBank = async (req, res) => {
       // the individual teacher assignment that happened to create it.
       filter.$or = [
         {
-          school: req.user.school,
-          visibility: "school",
+          // Keep every result inside the authenticated teacher's school.
+          // Accept legacy records whose visibility field predates the
+          // school-wide bank rollout (missing fields match null in MongoDB).
+          school: assignment.school,
+          visibility: { $in: ["school", null] },
           subject: assignment.subject?._id || assignment.subject,
           schoolClass: assignment.schoolClass?._id || assignment.schoolClass,
         },
