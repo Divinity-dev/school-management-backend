@@ -6,6 +6,7 @@ const marketingCampaignSchema = new mongoose.Schema(
     subject: { type: String, required: true, trim: true },
     html: { type: String, required: true },
     text: { type: String, default: "" },
+    personalizedPdf: { type: Boolean, default: false },
     status: {
       type: String,
       enum: ["draft", "sending", "scheduled", "sent", "partial", "failed"],
