@@ -869,13 +869,24 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
     const suppressions = new Set(
       (await MarketingSuppression.find({ email: { $in: emails } }).select("email").lean()).map((item) => item.email)
     );
+    const missingNameRecipients = campaign.personalizedPdf
+      ? batch.filter((recipient) => !String(recipient.contact?.schoolName || recipient.schoolName || "").trim())
+      : [];
+    if (missingNameRecipients.length) {
+      await MarketingCampaignRecipient.updateMany(
+        { _id: { $in: missingNameRecipients.map((item) => item._id) } },
+        { $set: { status: "failed", error: "Personalized proposal skipped because the recipient school name is missing." } }
+      );
+    }
     const eligible = batch.filter((recipient) =>
       recipient.contact &&
       !recipient.contact.archivedAt &&
       !suppressions.has(recipient.email) &&
+      (!campaign.personalizedPdf || String(recipient.contact.schoolName || recipient.schoolName || "").trim()) &&
       !["unsubscribed", "not_interested", "bounced", "complained", "suppressed"].includes(recipient.contact.status)
     );
     const blocked = batch.filter((recipient) =>
+      !missingNameRecipients.some((item) => String(item._id) === String(recipient._id)) &&
       !eligible.some((item) => String(item._id) === String(recipient._id))
     );
 
