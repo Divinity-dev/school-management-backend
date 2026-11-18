@@ -755,40 +755,82 @@ export const sendMarketingCampaignBatch = async (req, res) => {
     });
 
     try {
-      const result = await resendRequest("/emails/batch", {
-        method: "POST",
-        headers: { "Idempotency-Key": `schoolpilot-campaign-${campaign._id}-${queued[0]._id}` },
-        body: JSON.stringify(payload),
-      });
-
-      const sentData = Array.isArray(result.data) ? result.data : [];
-      for (let index = 0; index < eligible.length; index += 1) {
-        const recipient = eligible[index];
-        const sentItem = sentData[index] || {};
-        const emailId = sentItem.id || "";
-        await MarketingCampaignRecipient.updateOne(
-          { _id: recipient._id },
-          {
-            $set: {
-              status: emailId ? "sent" : "failed",
-              resendEmailId: emailId,
-              error: emailId ? "" : (sentItem.message || "Resend did not return an email ID."),
-              sentAt: emailId ? new Date() : null,
-            },
+      if (campaign.personalizedPdf) {
+        await Promise.all(eligible.map(async (recipient, index) => {
+          try {
+            const sentItem = await resendRequest("/emails", {
+              method: "POST",
+              headers: { "Idempotency-Key": `schoolpilot-proposal-${campaign._id}-${recipient._id}` },
+              body: JSON.stringify(payload[index]),
+            });
+            const emailId = sentItem.id || "";
+            await MarketingCampaignRecipient.updateOne(
+              { _id: recipient._id },
+              {
+                $set: {
+                  status: emailId ? "sent" : "failed",
+                  resendEmailId: emailId,
+                  error: emailId ? "" : (sentItem.message || "Resend did not return an email ID."),
+                  sentAt: emailId ? new Date() : null,
+                },
+              }
+            );
+            if (emailId && recipient.contact?._id) {
+              const contactedAt = new Date();
+              await Promise.all([
+                MarketingContact.updateOne(
+                  { _id: recipient.contact._id, status: "new" },
+                  { $set: { status: "contacted", lastContactedAt: contactedAt, nextFollowUpAt: null } }
+                ),
+                MarketingContact.updateOne(
+                  { _id: recipient.contact._id, status: "contacted" },
+                  { $set: { lastContactedAt: contactedAt, nextFollowUpAt: null } }
+                ),
+              ]);
+            }
+          } catch (sendError) {
+            await MarketingCampaignRecipient.updateOne(
+              { _id: recipient._id },
+              { $set: { status: "failed", error: sendError.message || "Resend proposal email failed." } }
+            );
           }
-        );
-        if (emailId && recipient.contact?._id) {
-          const contactedAt = new Date();
-          await Promise.all([
-            MarketingContact.updateOne(
-              { _id: recipient.contact._id, status: "new" },
-              { $set: { status: "contacted", lastContactedAt: contactedAt, nextFollowUpAt: null } }
-            ),
-            MarketingContact.updateOne(
-              { _id: recipient.contact._id, status: "contacted" },
-              { $set: { lastContactedAt: contactedAt, nextFollowUpAt: null } }
-            ),
-          ]);
+        }));
+      } else {
+        const result = await resendRequest("/emails/batch", {
+          method: "POST",
+          headers: { "Idempotency-Key": `schoolpilot-campaign-${campaign._id}-${queued[0]._id}` },
+          body: JSON.stringify(payload),
+        });
+
+        const sentData = Array.isArray(result.data) ? result.data : [];
+        for (let index = 0; index < eligible.length; index += 1) {
+          const recipient = eligible[index];
+          const sentItem = sentData[index] || {};
+          const emailId = sentItem.id || "";
+          await MarketingCampaignRecipient.updateOne(
+            { _id: recipient._id },
+            {
+              $set: {
+                status: emailId ? "sent" : "failed",
+                resendEmailId: emailId,
+                error: emailId ? "" : (sentItem.message || "Resend did not return an email ID."),
+                sentAt: emailId ? new Date() : null,
+              },
+            }
+          );
+          if (emailId && recipient.contact?._id) {
+            const contactedAt = new Date();
+            await Promise.all([
+              MarketingContact.updateOne(
+                { _id: recipient.contact._id, status: "new" },
+                { $set: { status: "contacted", lastContactedAt: contactedAt, nextFollowUpAt: null } }
+              ),
+              MarketingContact.updateOne(
+                { _id: recipient.contact._id, status: "contacted" },
+                { $set: { lastContactedAt: contactedAt, nextFollowUpAt: null } }
+              ),
+            ]);
+          }
         }
       }
     } catch (sendError) {
@@ -824,6 +866,11 @@ export const sendMarketingCampaignBatch = async (req, res) => {
 
 export const scheduleMarketingCampaignBatch = async (req, res) => {
   try {
+    const campaignForSchedule = await MarketingCampaign.findById(req.params.id).select("personalizedPdf").lean();
+    if (!campaignForSchedule) return res.status(404).json({ success: false, message: "Campaign not found." });
+    if (campaignForSchedule.personalizedPdf) {
+      return res.status(400).json({ success: false, message: "Personalized PDF proposal campaigns must be sent immediately. Resend does not support scheduled emails with attachments." });
+    }
     if (req.body.confirmSchedule !== true) {
       return res.status(400).json({ success: false, message: "Confirm the campaign schedule before continuing." });
     }
@@ -906,7 +953,6 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
       const personalizedHtml = personalizeCampaignHtml(campaign.html, contact);
       const unsubscribeUrl = personalizedHtml.match(/href="([^"]+)"[^>]*>Unsubscribe/i)?.[1] || "";
       try {
-        const attachments = campaign.personalizedPdf ? [{ filename: (String(contact.schoolName || "").replace(/[^a-z0-9-_ ]/gi, "").trim().replace(/\\s+/g, "-") || "School") + "-SchoolPilot-Proposal.pdf", content: createPersonalizedProposalPdf(contact.schoolName).toString("base64") }] : undefined;
         const result = await resendRequest("/emails", {
           method: "POST",
           headers: { "Idempotency-Key": `schoolpilot-scheduled-${campaign._id}-${recipient._id}` },
@@ -917,7 +963,6 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
             html: personalizedHtml,
             text: `${(campaign.text || htmlToText(campaign.html)).replace(/{{\s*schoolName\s*}}/gi, () => contact.schoolName || "there").replace(/{{\s*email\s*}}/gi, () => contact.email || "")}\n\nUnsubscribe: ${unsubscribeUrl}`,
             reply_to: replyTo,
-            ...(attachments ? { attachments } : {}),
             scheduled_at: scheduledAt.toISOString(),
             headers: unsubscribeUrl
               ? { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
