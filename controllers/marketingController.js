@@ -168,7 +168,18 @@ export const listMarketingContacts = async (req, res) => {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 25, 1), 100);
     const filter = { archivedAt: null };
 
-    if (req.query.status) filter.status = req.query.status;
+    const segment = String(req.query.segment || "");
+    if (segment === "new") {
+      filter.status = "new";
+    } else if (segment === "previously_contacted") {
+      filter.status = "contacted";
+      filter.lastContactedAt = { $ne: null };
+    } else if (segment === "follow_up_due") {
+      filter.status = "contacted";
+      filter.nextFollowUpAt = { $ne: null, $lte: new Date() };
+    } else if (req.query.status) {
+      filter.status = req.query.status;
+    }
     if (req.query.category) filter.category = req.query.category;
     if (req.query.q) {
       const q = [...String(req.query.q).trim()].map((character) => "\\.^$*+?{}()|[]".includes(character) ? "\\" + character : character).join("");
@@ -189,9 +200,33 @@ export const listMarketingContacts = async (req, res) => {
       MarketingContact.distinct("category", { archivedAt: null }),
     ]);
 
+    const recipientHistory = contacts.length
+      ? await MarketingCampaignRecipient.find({ contact: { $in: contacts.map((contact) => contact._id) } })
+          .sort({ createdAt: -1 })
+          .populate("campaign", "name")
+          .lean()
+      : [];
+    const historyByContact = new Map();
+    for (const recipient of recipientHistory) {
+      const key = String(recipient.contact);
+      const history = historyByContact.get(key) || [];
+      history.push({
+        name: recipient.campaign?.name || "Campaign",
+        status: recipient.status,
+        sentAt: recipient.sentAt || null,
+        createdAt: recipient.createdAt || null,
+      });
+      historyByContact.set(key, history);
+    }
+    const contactsWithHistory = contacts.map((contact) => {
+      const history = historyByContact.get(String(contact._id)) || [];
+      const sentEmailCount = history.filter((item) => item.sentAt || ["sent", "delivered", "bounced", "complained"].includes(item.status)).length;
+      return { ...contact, campaignCount: history.length, sentEmailCount, campaignHistory: history.slice(0, 5) };
+    });
+
     return res.json({
       success: true,
-      contacts,
+      contacts: contactsWithHistory,
       categories: categories.filter(Boolean).sort(),
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
@@ -716,10 +751,17 @@ export const sendMarketingCampaignBatch = async (req, res) => {
           }
         );
         if (emailId && recipient.contact?._id) {
-          await MarketingContact.updateOne(
-            { _id: recipient.contact._id, status: "new" },
-            { $set: { status: "contacted", lastContactedAt: new Date() } }
-          );
+          const contactedAt = new Date();
+          await Promise.all([
+            MarketingContact.updateOne(
+              { _id: recipient.contact._id, status: "new" },
+              { $set: { status: "contacted", lastContactedAt: contactedAt, nextFollowUpAt: null } }
+            ),
+            MarketingContact.updateOne(
+              { _id: recipient.contact._id, status: "contacted" },
+              { $set: { lastContactedAt: contactedAt, nextFollowUpAt: null } }
+            ),
+          ]);
         }
       }
     } catch (sendError) {
