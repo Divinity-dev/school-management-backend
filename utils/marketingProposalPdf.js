@@ -218,7 +218,7 @@ export const createPersonalizedProposalPdf = (schoolName) => {
   addParagraph("SchoolPilot provides schools with a digital presence through a school website where important institutional information, announcements, news, and events can be shared with the school community.");
   addParagraph("The school can use its online presence to showcase the institution and communicate updates to parents, students, and the wider community.");
 
-  addHeading("4. BENEFITS TO THE SCHOOL");
+  addHeading("4. BENEFITS TO " + recipientName.toUpperCase());
   addParagraph(`By adopting SchoolPilot, ${recipientName} can benefit from:`);
   [
     [9,"Improved Administrative Efficiency: Reduce repetitive manual processes and organize important school operations in one place."],
