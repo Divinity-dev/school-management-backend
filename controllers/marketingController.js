@@ -220,7 +220,8 @@ export const listMarketingContacts = async (req, res) => {
     }
     const contactsWithHistory = contacts.map((contact) => {
       const history = historyByContact.get(String(contact._id)) || [];
-      return { ...contact, campaignCount: history.length, campaignHistory: history.slice(0, 5) };
+      const sentEmailCount = history.filter((item) => item.sentAt || ["sent", "delivered", "bounced", "complained"].includes(item.status)).length;
+      return { ...contact, campaignCount: history.length, sentEmailCount, campaignHistory: history.slice(0, 5) };
     });
 
     return res.json({
