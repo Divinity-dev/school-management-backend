@@ -750,7 +750,7 @@ export const sendMarketingCampaignBatch = async (req, res) => {
         headers: unsubscribeUrl
           ? { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
           : undefined,
-        ...(campaign.personalizedPdf ? { attachments: [{ filename: (contact.schoolName.replace(/[^a-z0-9-_ ]/gi, "").trim().replace(/\\s+/g, "-") || "School") + "-SchoolPilot-Proposal.pdf", content: createPersonalizedProposalPdf(contact.schoolName).toString("base64") }] } : {}),
+        ...(campaign.personalizedPdf ? { attachments: [{ filename: (contact.schoolName.replace(/[^a-z0-9 _-]/gi, "").trim().replace(/\s+/g, "-") || "School") + "-SchoolPilot-Proposal.pdf", content: createPersonalizedProposalPdf(contact.schoolName).toString("base64") }] } : {}),
       };
     });
 
