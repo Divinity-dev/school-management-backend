@@ -9,6 +9,7 @@ import MarketingMessage from "../models/MarketingMessage.js";
 import MarketingSuppression from "../models/MarketingSuppression.js";
 import MarketingWebhookEvent from "../models/MarketingWebhookEvent.js";
 import MarketingActivity from "../models/MarketingActivity.js";
+import { createPersonalizedProposalPdf } from "../utils/marketingProposalPdf.js";
 
 import {
   extractEmail,
@@ -484,6 +485,7 @@ export const createMarketingCampaign = async (req, res) => {
     const name = String(req.body.name || "").trim();
     const subject = String(req.body.subject || "").trim();
     const html = String(req.body.html || "").trim();
+    const personalizedPdf = req.body.personalizedPdf === true;
     const contactIds = Array.isArray(req.body.contactIds) ? [...new Set(req.body.contactIds)] : [];
 
     if (!name || !subject || !html || !contactIds.length) {
@@ -507,9 +509,11 @@ export const createMarketingCampaign = async (req, res) => {
       (await MarketingSuppression.find({ email: { $in: contacts.map((item) => item.email) } }).select("email").lean())
         .map((item) => item.email)
     );
-    const eligible = contacts.filter((contact) => !suppressed.has(contact.email));
+    const namedContacts = personalizedPdf ? contacts.filter((contact) => String(contact.schoolName || "").trim()) : contacts;
+    const skippedMissingSchoolName = contacts.length - namedContacts.length;
+    const eligible = namedContacts.filter((contact) => !suppressed.has(contact.email));
     if (!eligible.length) {
-      return res.status(400).json({ success: false, message: "All selected contacts are on the suppression list." });
+      return res.status(400).json({ success: false, message: personalizedPdf ? "No eligible contacts with a school name are available for personalized proposals." : "All selected contacts are on the suppression list." });
     }
 
     const campaign = await MarketingCampaign.create({
@@ -517,6 +521,7 @@ export const createMarketingCampaign = async (req, res) => {
       subject,
       html,
       text: String(req.body.text || htmlToText(html)),
+      personalizedPdf,
       recipientCount: eligible.length,
       queuedCount: eligible.length,
       createdBy: req.user._id,
@@ -539,7 +544,8 @@ export const createMarketingCampaign = async (req, res) => {
     });
     return res.status(201).json({
       success: true,
-      message: "Campaign draft created successfully.",
+      message: skippedMissingSchoolName ? "Campaign draft created. " + skippedMissingSchoolName + " contact(s) without a school name were skipped." : "Campaign draft created successfully.",
+      skippedMissingSchoolName,
       campaign,
     });
   } catch (error) {
@@ -568,7 +574,7 @@ export const updateMarketingCampaign = async (req, res) => {
     if (!campaign) return res.status(404).json({ success: false, message: "Campaign not found." });
 
     const existingRecipients = await MarketingCampaignRecipient.find({ campaign: campaign._id })
-      .select("status")
+      .select("status schoolName")
       .lean();
     const canEdit = campaign.status === "draft" &&
       Number(campaign.sentCount || 0) === 0 &&
@@ -585,6 +591,7 @@ export const updateMarketingCampaign = async (req, res) => {
     const name = String(req.body.name ?? campaign.name).trim();
     const subject = String(req.body.subject ?? campaign.subject).trim();
     const html = String(req.body.html ?? campaign.html).trim();
+    const personalizedPdf = req.body.personalizedPdf !== undefined ? req.body.personalizedPdf === true : campaign.personalizedPdf === true;
     const contactIds = Array.isArray(req.body.contactIds)
       ? [...new Set(req.body.contactIds.map(String))]
       : null;
@@ -597,6 +604,7 @@ export const updateMarketingCampaign = async (req, res) => {
     }
 
     let eligible = null;
+    let skippedMissingSchoolName = 0;
     if (contactIds) {
       if (!contactIds.length || contactIds.some((id) => !mongoose.Types.ObjectId.isValid(id))) {
         return res.status(400).json({ success: false, message: "Select at least one valid contact." });
@@ -613,17 +621,21 @@ export const updateMarketingCampaign = async (req, res) => {
           .select("email")
           .lean()).map((item) => item.email)
       );
-      eligible = contacts.filter((contact) => !suppressed.has(contact.email));
-
+      const namedContacts = personalizedPdf ? contacts.filter((contact) => String(contact.schoolName || "").trim()) : contacts;
+      skippedMissingSchoolName = contacts.length - namedContacts.length;
+      eligible = namedContacts.filter((contact) => !suppressed.has(contact.email));
       if (!eligible.length) {
-        return res.status(400).json({ success: false, message: "No eligible contacts remain selected." });
+        return res.status(400).json({ success: false, message: personalizedPdf ? "No eligible contacts with a school name remain selected." : "No eligible contacts remain selected." });
       }
+    } else if (personalizedPdf && existingRecipients.some((recipient) => !String(recipient.schoolName || "").trim())) {
+      return res.status(400).json({ success: false, message: "This draft contains recipients without school names. Edit the recipient list before enabling personalized proposals." });
     }
 
     campaign.name = name;
     campaign.subject = subject;
     campaign.html = html;
     campaign.text = String(req.body.text || htmlToText(html));
+    campaign.personalizedPdf = personalizedPdf;
     if (eligible) {
       await MarketingCampaignRecipient.deleteMany({ campaign: campaign._id });
       await MarketingCampaignRecipient.insertMany(
@@ -646,7 +658,7 @@ export const updateMarketingCampaign = async (req, res) => {
       metadata: { recipientCount: campaign.recipientCount },
     });
 
-    return res.json({ success: true, message: "Campaign draft updated successfully.", campaign });
+    return res.json({ success: true, message: skippedMissingSchoolName ? "Campaign draft updated. " + skippedMissingSchoolName + " contact(s) without a school name were skipped." : "Campaign draft updated successfully.", skippedMissingSchoolName, campaign });
   } catch (error) {
     return sendError(res, error, "Failed to update campaign draft.");
   }
@@ -687,15 +699,29 @@ export const sendMarketingCampaignBatch = async (req, res) => {
     const suppressions = new Set(
       (await MarketingSuppression.find({ email: { $in: emails } }).select("email").lean()).map((item) => item.email)
     );
+    const missingNameRecipients = campaign.personalizedPdf
+      ? queued.filter((recipient) => !String(recipient.contact?.schoolName || recipient.schoolName || "").trim())
+      : [];
+    if (missingNameRecipients.length) {
+      await MarketingCampaignRecipient.updateMany(
+        { _id: { $in: missingNameRecipients.map((item) => item._id) } },
+        { $set: { status: "failed", error: "Personalized proposal skipped because the recipient school name is missing." } }
+      );
+    }
+
     const eligible = queued.filter(
       (recipient) =>
         recipient.contact &&
         !recipient.contact.archivedAt &&
         !suppressions.has(recipient.email) &&
+        (!campaign.personalizedPdf || String(recipient.contact.schoolName || recipient.schoolName || "").trim()) &&
         !["unsubscribed", "not_interested", "bounced", "complained", "suppressed"].includes(recipient.contact.status)
     );
 
-    const blocked = queued.filter((recipient) => !eligible.some((item) => String(item._id) === String(recipient._id)));
+    const blocked = queued.filter((recipient) =>
+      !missingNameRecipients.some((item) => String(item._id) === String(recipient._id)) &&
+      !eligible.some((item) => String(item._id) === String(recipient._id))
+    );
     if (blocked.length) {
       await MarketingCampaignRecipient.updateMany(
         { _id: { $in: blocked.map((item) => item._id) } },
@@ -711,7 +737,7 @@ export const sendMarketingCampaignBatch = async (req, res) => {
     const from = process.env.MARKETING_FROM_EMAIL || "SchoolPilot <hello@school-pilot.app>";
     const replyTo = process.env.MARKETING_REPLY_TO_EMAIL || "hello@school-pilot.app";
     const payload = eligible.map((recipient) => {
-      const contact = recipient.contact || { schoolName: recipient.schoolName, email: recipient.email };
+      const contact = { ...(recipient.contact || {}), schoolName: String(recipient.contact?.schoolName || recipient.schoolName || "").trim(), email: recipient.email };
       const personalizedHtml = personalizeCampaignHtml(campaign.html, contact);
       const unsubscribeUrl = personalizedHtml.match(/href="([^"]+)"[^>]*>Unsubscribe/i)?.[1] || "";
       return {
@@ -724,44 +750,87 @@ export const sendMarketingCampaignBatch = async (req, res) => {
         headers: unsubscribeUrl
           ? { "List-Unsubscribe": `<${unsubscribeUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }
           : undefined,
+        ...(campaign.personalizedPdf ? { attachments: [{ filename: (contact.schoolName.replace(/[^a-z0-9 _-]/gi, "").trim().replace(/\s+/g, "-") || "School") + "-SchoolPilot-Proposal.pdf", content: createPersonalizedProposalPdf(contact.schoolName).toString("base64") }] } : {}),
       };
     });
 
     try {
-      const result = await resendRequest("/emails/batch", {
-        method: "POST",
-        headers: { "Idempotency-Key": `schoolpilot-campaign-${campaign._id}-${queued[0]._id}` },
-        body: JSON.stringify(payload),
-      });
-
-      const sentData = Array.isArray(result.data) ? result.data : [];
-      for (let index = 0; index < eligible.length; index += 1) {
-        const recipient = eligible[index];
-        const sentItem = sentData[index] || {};
-        const emailId = sentItem.id || "";
-        await MarketingCampaignRecipient.updateOne(
-          { _id: recipient._id },
-          {
-            $set: {
-              status: emailId ? "sent" : "failed",
-              resendEmailId: emailId,
-              error: emailId ? "" : (sentItem.message || "Resend did not return an email ID."),
-              sentAt: emailId ? new Date() : null,
-            },
+      if (campaign.personalizedPdf) {
+        await Promise.all(eligible.map(async (recipient, index) => {
+          try {
+            const sentItem = await resendRequest("/emails", {
+              method: "POST",
+              headers: { "Idempotency-Key": `schoolpilot-proposal-${campaign._id}-${recipient._id}` },
+              body: JSON.stringify(payload[index]),
+            });
+            const emailId = sentItem.id || "";
+            await MarketingCampaignRecipient.updateOne(
+              { _id: recipient._id },
+              {
+                $set: {
+                  status: emailId ? "sent" : "failed",
+                  resendEmailId: emailId,
+                  error: emailId ? "" : (sentItem.message || "Resend did not return an email ID."),
+                  sentAt: emailId ? new Date() : null,
+                },
+              }
+            );
+            if (emailId && recipient.contact?._id) {
+              const contactedAt = new Date();
+              await Promise.all([
+                MarketingContact.updateOne(
+                  { _id: recipient.contact._id, status: "new" },
+                  { $set: { status: "contacted", lastContactedAt: contactedAt, nextFollowUpAt: null } }
+                ),
+                MarketingContact.updateOne(
+                  { _id: recipient.contact._id, status: "contacted" },
+                  { $set: { lastContactedAt: contactedAt, nextFollowUpAt: null } }
+                ),
+              ]);
+            }
+          } catch (sendError) {
+            await MarketingCampaignRecipient.updateOne(
+              { _id: recipient._id },
+              { $set: { status: "failed", error: sendError.message || "Resend proposal email failed." } }
+            );
           }
-        );
-        if (emailId && recipient.contact?._id) {
-          const contactedAt = new Date();
-          await Promise.all([
-            MarketingContact.updateOne(
-              { _id: recipient.contact._id, status: "new" },
-              { $set: { status: "contacted", lastContactedAt: contactedAt, nextFollowUpAt: null } }
-            ),
-            MarketingContact.updateOne(
-              { _id: recipient.contact._id, status: "contacted" },
-              { $set: { lastContactedAt: contactedAt, nextFollowUpAt: null } }
-            ),
-          ]);
+        }));
+      } else {
+        const result = await resendRequest("/emails/batch", {
+          method: "POST",
+          headers: { "Idempotency-Key": `schoolpilot-campaign-${campaign._id}-${queued[0]._id}` },
+          body: JSON.stringify(payload),
+        });
+
+        const sentData = Array.isArray(result.data) ? result.data : [];
+        for (let index = 0; index < eligible.length; index += 1) {
+          const recipient = eligible[index];
+          const sentItem = sentData[index] || {};
+          const emailId = sentItem.id || "";
+          await MarketingCampaignRecipient.updateOne(
+            { _id: recipient._id },
+            {
+              $set: {
+                status: emailId ? "sent" : "failed",
+                resendEmailId: emailId,
+                error: emailId ? "" : (sentItem.message || "Resend did not return an email ID."),
+                sentAt: emailId ? new Date() : null,
+              },
+            }
+          );
+          if (emailId && recipient.contact?._id) {
+            const contactedAt = new Date();
+            await Promise.all([
+              MarketingContact.updateOne(
+                { _id: recipient.contact._id, status: "new" },
+                { $set: { status: "contacted", lastContactedAt: contactedAt, nextFollowUpAt: null } }
+              ),
+              MarketingContact.updateOne(
+                { _id: recipient.contact._id, status: "contacted" },
+                { $set: { lastContactedAt: contactedAt, nextFollowUpAt: null } }
+              ),
+            ]);
+          }
         }
       }
     } catch (sendError) {
@@ -797,6 +866,11 @@ export const sendMarketingCampaignBatch = async (req, res) => {
 
 export const scheduleMarketingCampaignBatch = async (req, res) => {
   try {
+    const campaignForSchedule = await MarketingCampaign.findById(req.params.id).select("personalizedPdf").lean();
+    if (!campaignForSchedule) return res.status(404).json({ success: false, message: "Campaign not found." });
+    if (campaignForSchedule.personalizedPdf) {
+      return res.status(400).json({ success: false, message: "Personalized PDF proposal campaigns must be sent immediately. Resend does not support scheduled emails with attachments." });
+    }
     if (req.body.confirmSchedule !== true) {
       return res.status(400).json({ success: false, message: "Confirm the campaign schedule before continuing." });
     }
@@ -842,13 +916,24 @@ export const scheduleMarketingCampaignBatch = async (req, res) => {
     const suppressions = new Set(
       (await MarketingSuppression.find({ email: { $in: emails } }).select("email").lean()).map((item) => item.email)
     );
+    const missingNameRecipients = campaign.personalizedPdf
+      ? batch.filter((recipient) => !String(recipient.contact?.schoolName || recipient.schoolName || "").trim())
+      : [];
+    if (missingNameRecipients.length) {
+      await MarketingCampaignRecipient.updateMany(
+        { _id: { $in: missingNameRecipients.map((item) => item._id) } },
+        { $set: { status: "failed", error: "Personalized proposal skipped because the recipient school name is missing." } }
+      );
+    }
     const eligible = batch.filter((recipient) =>
       recipient.contact &&
       !recipient.contact.archivedAt &&
       !suppressions.has(recipient.email) &&
+      (!campaign.personalizedPdf || String(recipient.contact.schoolName || recipient.schoolName || "").trim()) &&
       !["unsubscribed", "not_interested", "bounced", "complained", "suppressed"].includes(recipient.contact.status)
     );
     const blocked = batch.filter((recipient) =>
+      !missingNameRecipients.some((item) => String(item._id) === String(recipient._id)) &&
       !eligible.some((item) => String(item._id) === String(recipient._id))
     );
 
