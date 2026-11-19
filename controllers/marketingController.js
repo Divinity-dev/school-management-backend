@@ -1119,6 +1119,12 @@ export const listMarketingInbox = async (req, res) => {
   }
 };
 
+const normalizeMarketingThreadSubject = (subject = "") =>
+  String(subject || "")
+    .replace(/^\\s*((re|fw|fwd)\\s*:\\s*)+/i, "")
+    .trim()
+    .toLowerCase();
+
 export const getMarketingInboxMessage = async (req, res) => {
   try {
     const message = await MarketingMessage.findById(req.params.id)
@@ -1135,7 +1141,22 @@ export const getMarketingInboxMessage = async (req, res) => {
       message.readAt = new Date();
     }
 
-    return res.json({ success: true, message });
+    let thread = [message];
+    if (message.contact) {
+      const relatedMessages = await MarketingMessage.find({ contact: message.contact._id || message.contact })
+        .sort({ receivedAt: 1, createdAt: 1 })
+        .lean();
+      const subjectKey = normalizeMarketingThreadSubject(message.subject);
+      thread = relatedMessages.filter(
+        (item) => normalizeMarketingThreadSubject(item.subject) === subjectKey
+      );
+      if (!thread.some((item) => String(item._id) === String(message._id))) {
+        thread.push(message);
+      }
+      thread.sort((a, b) => new Date(a.receivedAt || a.createdAt) - new Date(b.receivedAt || b.createdAt));
+    }
+
+    return res.json({ success: true, message, thread });
   } catch (error) {
     return sendError(res, error, "Failed to load the message.");
   }
@@ -1166,9 +1187,9 @@ export const replyToMarketingMessage = async (req, res) => {
     const result = await resendRequest("/emails", {
       method: "POST",
       body: JSON.stringify({
-        from: process.env.MARKETING_FROM_EMAIL || "SchoolPilot <hello@school-pilot.app>",
+        from: process.env.MARKETING_FROM_EMAIL || "SchoolPilot <info@school-pilot.app>",
         to: [recipient],
-        reply_to: process.env.MARKETING_REPLY_TO_EMAIL || "hello@school-pilot.app",
+        reply_to: process.env.MARKETING_REPLY_TO_EMAIL || "info@school-pilot.app",
         subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject || "Your message to SchoolPilot"}`,
         text,
         html,
@@ -1181,7 +1202,7 @@ export const replyToMarketingMessage = async (req, res) => {
       resendEmailId: result.id || undefined,
       contact: message.contact,
       campaign: message.campaign,
-      from: process.env.MARKETING_FROM_EMAIL || "hello@school-pilot.app",
+      from: process.env.MARKETING_FROM_EMAIL || "SchoolPilot <info@school-pilot.app>",
       to: [recipient],
       subject: /^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject || "Your message to SchoolPilot"}`,
       text,
