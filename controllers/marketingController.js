@@ -1121,7 +1121,7 @@ export const listMarketingInbox = async (req, res) => {
 
 const normalizeMarketingThreadSubject = (subject = "") =>
   String(subject || "")
-    .replace(/^\\s*((re|fw|fwd)\\s*:\\s*)+/i, "")
+    .replace(/^\s*((re|fw|fwd)\s*:\s*)+/i, "")
     .trim()
     .toLowerCase();
 
